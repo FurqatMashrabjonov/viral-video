@@ -53,10 +53,17 @@ Endpointlar:
 
 | Method | Path | Vazifa |
 |---|---|---|
-| POST | `/process` | video yuklash (`file`, `style`), `{"job_id"}` qaytaradi |
-| GET | `/status/{id}` | `{"status", "progress", "error"}` |
-| GET | `/result/{id}` | tayyor video (mp4) |
-| GET | `/result/{id}/metadata` | duration, word_count, cost |
+| GET | `/api/projects` | loyihalar ro'yxati |
+| POST | `/api/projects` | video yuklash + ingest, `{"project_id"}` qaytaradi |
+| GET | `/api/projects/{id}` | loyiha + reja + renderlar |
+| PUT | `/api/projects/{id}/plan` | tahrirlangan rejani saqlash |
+| POST | `/api/projects/{id}/render` | sozlamalar bilan render, `{"render_id"}` |
+| GET | `/api/renders/{id}` | holat, progress, sozlamalar |
+| GET | `/api/renders/{id}/video` | tayyor video (mp4) |
+| GET | `/api/settings/defaults` | standart sozlamalar |
+
+Eski bir martalik oqim ham ishlaydi (`/process`, `/status/{id}`,
+`/result/{id}`) — mavjud test UI shundan foydalanadi.
 
 Navbat hozircha bitta ishchi bilan in-process (`ThreadPoolExecutor`). Ko'p
 ishchi/qayta ishga tushganda saqlanishi kerak bo'lsa — Celery/RQ ga
@@ -82,6 +89,32 @@ Yangi shrift kerak bo'lsa — `fonts/` papkaga qo'shib, style yaml da
 qo'shsangiz, faylni `luts/` ga qo'ying va `enhance.py --lut path/to.cube`
 yoki `run_pipeline(..., lut_path=...)` bilan ko'rsating. Faqat CC0/o'z
 LUT — litsenziyasi noaniq LUT ishlatilmaydi.
+
+## Ikki faza: ingest va render
+
+Transkripsiya bir marta, render cheksiz marta. Scribe marjinal xarajatning ~98%
+ini yeydi, shuning uchun foydalanuvchi sozlamani o'zgartirsa yoki subtitrdagi
+xatoni tuzatsa, transkripsiya **qayta ishlamasligi shart**.
+
+```python
+from pipeline import ingest, render
+
+project_id = ingest("video.mp4")            # qimmat: Scribe + Gemini
+render(project_id)                          # arzon: faqat CPU
+render(project_id, {"zoom": False})         # yana arzon
+render(project_id, {"style": "bold_pop"})   # yana arzon
+```
+
+Holat SQLite'da (`data/uzcaption.db`), videolar diskda (`data/media/`) —
+bazaga BLOB sifatida yozilmaydi, aks holda baza fayli shishadi va videoni
+oddiy range-request oqimi sifatida berish qiyinlashadi.
+
+`test_pipeline_smoke.py` shu xususiyatni qo'riqlaydi: `ingest` bir marta
+chaqiriladi, keyin ikkita render va bitta tahrirdan so'ng Scribe chaqiruvi
+soni hali ham 1 bo'lishi kerak.
+
+Xarajat logi ikkalasini alohida yozadi — `INGEST` qatorida Scribe narxi,
+`RENDER` qatorida faqat CPU.
 
 ## Edit plan (`analyze.py`)
 

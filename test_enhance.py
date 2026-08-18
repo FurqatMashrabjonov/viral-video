@@ -1,0 +1,93 @@
+"""Self-check for the zoom expression builder in enhance.py.
+
+The zoom factors themselves were verified by rendering a clip containing a
+known-size box and measuring it: 1.000x outside the window, 1.225x mid-ramp,
+1.300x at hold, 1.000x after. These tests guard the string that produced it.
+
+Run: .venv/bin/python test_enhance.py
+"""
+from enhance import build_zoom_expr, build_zoom_filter, build_video_filter
+
+ZOOMS = [
+    {"start": 2.0, "end": 3.2, "scale": 1.30},
+    {"start": 6.0, "end": 7.2, "scale": 1.15},
+]
+
+
+def test_no_zooms_means_no_filter():
+    assert build_zoom_filter([], 1080, 1920, 30) == ""
+
+
+def test_one_branch_per_zoom():
+    assert build_zoom_expr(ZOOMS).count("if(between(") == len(ZOOMS)
+
+
+def test_default_branch_is_unzoomed():
+    """Anything outside every window must fall through to 1, or the clip stays
+    stuck at the last zoom level. The tail is `,1` plus one `)` per nested if."""
+    expr = build_zoom_expr(ZOOMS)
+    head, _, tail = expr.rpartition(",1")
+    assert head and set(tail) == {")"}, expr
+    assert len(tail) == len(ZOOMS), "unbalanced nesting"
+
+
+def test_expression_parentheses_balance():
+    expr = build_zoom_expr(ZOOMS)
+    assert expr.count("(") == expr.count(")")
+
+
+def test_scale_appears_as_a_delta_above_one():
+    expr = build_zoom_expr([{"start": 0.0, "end": 1.0, "scale": 1.30}])
+    assert "1+0.3000*" in expr, expr
+
+
+def test_windows_keep_their_order():
+    expr = build_zoom_expr(ZOOMS)
+    assert expr.index("2.0") < expr.index("6.0"), "later zoom must nest deeper"
+
+
+def test_ramp_is_symmetric_at_both_edges():
+    expr = build_zoom_expr([{"start": 2.0, "end": 3.2, "scale": 1.3}], ramp=0.22)
+    assert "(in_time-2.0)/0.22" in expr, "no ease in"
+    assert "(3.2-in_time)/0.22" in expr, "no ease out"
+
+
+def test_filter_pins_output_size_and_fps():
+    """zoompan defaults to hd720 and its own rate; both must be overridden or the
+    clip silently changes resolution and timing."""
+    f = build_zoom_filter(ZOOMS, 1080, 1920, 30)
+    assert "s=1080x1920" in f
+    assert "fps=30" in f
+
+
+def test_zoom_is_centre_anchored():
+    f = build_zoom_filter(ZOOMS, 1080, 1920, 30)
+    assert "iw/2-(iw/zoom/2)" in f and "ih/2-(ih/zoom/2)" in f
+
+
+def test_zoom_runs_before_vignette_and_captions():
+    """Vignette belongs to the frame edge and captions must not scale with the
+    picture, so both have to come after the zoom."""
+    eq = {"brightness": 0.0, "contrast": 1.0}
+    g = build_video_filter(eq, "luts/warm_standard.cube", "x.ass", build_zoom_filter(ZOOMS, 1080, 1920, 30))
+    assert g.index("zoompan") < g.index("vignette") < g.index("ass=")
+
+
+def test_graph_still_connects_when_there_is_no_zoom():
+    eq = {"brightness": 0.0, "contrast": 1.0}
+    g = build_video_filter(eq, "luts/warm_standard.cube", None, "")
+    assert "[zoomed]" in g and "[vout]" in g
+
+
+if __name__ == "__main__":
+    import sys
+    failed = 0
+    for name, fn in list(globals().items()):
+        if name.startswith("test_") and callable(fn):
+            try:
+                fn()
+                print(f"PASS {name}")
+            except AssertionError as e:
+                failed += 1
+                print(f"FAIL {name}: {e}")
+    sys.exit(1 if failed else 0)

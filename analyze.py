@@ -15,7 +15,7 @@ from pathlib import Path
 MIN_SILENCE_GAP = 0.35      # gaps longer than this get cut
 KEEP_PAD = 0.05             # leave a sliver of silence so speech isn't clipped
 MIN_ZOOM_SPACING = 3.0      # research: a visual change every 3-5s
-ZOOM_DURATION = 0.5
+ZOOM_DURATION = 1.2       # render ramps ~0.22s in and out, so leave room to hold
 ZOOM_SCALE = 1.15
 HOOK_END = 3.0
 

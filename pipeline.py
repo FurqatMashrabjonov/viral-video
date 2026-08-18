@@ -58,6 +58,7 @@ def run_pipeline(input_path: str, style_name: str = "warm_karaoke", language_cod
             lut_path=lut_path or DEFAULT_LUT,
             ass_path=str(ass_path),
             progress_cb=progress_cb,
+            zooms=plan["zooms"],
         )
 
     cpu_seconds = _cpu_seconds() - cpu_start

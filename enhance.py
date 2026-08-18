@@ -119,13 +119,47 @@ def build_video_filter(eq: dict, lut_path: str, ass_path: str | None, zoom: str 
     return graph
 
 
-def build_audio_filter() -> str:
-    return (
+SFX_DIR = Path("sfx")
+SFX_VOLUME = 0.35  # well under speech; these punctuate, they don't compete
+
+
+def build_audio_filter(sfx: list[dict] | None = None, sfx_inputs: dict | None = None,
+                       volume: float = SFX_VOLUME) -> str:
+    """Speech cleanup, then the effect bed mixed in, then loudness normalisation.
+
+    Denoise/high-pass/compression apply to the voice only -- running them over the
+    effects would dull them. loudnorm goes last so the whole mix, effects
+    included, lands on -16 LUFS / -1.5 dBTP rather than the effects pushing the
+    true peak past it afterwards.
+    """
+    speech = (
         "[0:a]afftdn=nr=12,"
         "highpass=f=80,"
-        "acompressor=threshold=-18dB:ratio=3:attack=5:release=50,"
-        "loudnorm=I=-16:TP=-1.5:LRA=11[aout]"
+        "acompressor=threshold=-18dB:ratio=3:attack=5:release=50[speech]"
     )
+    if not sfx or not sfx_inputs:
+        return speech + ";[speech]loudnorm=I=-16:TP=-1.5:LRA=11[aout]"
+
+    parts, labels = [speech], []
+    for name, idx in sfx_inputs.items():
+        times = [e["time"] for e in sfx if e["name"] == name]
+        if not times:
+            continue
+        # One decoded copy of the file, split into as many voices as it is used.
+        outs = "".join(f"[{name}{i}]" for i in range(len(times)))
+        parts.append(f"[{idx}:a]asplit={len(times)}{outs}")
+        for i, t in enumerate(times):
+            label = f"{name}d{i}"
+            parts.append(f"[{name}{i}]adelay={int(t * 1000)}:all=1,volume={volume}[{label}]")
+            labels.append(f"[{label}]")
+
+    # normalize=0 is essential: amix otherwise divides every input by the input
+    # count, which would quietly drop the speech by 1/N.
+    parts.append(
+        f"[speech]{''.join(labels)}amix=inputs={1 + len(labels)}:normalize=0:duration=first[mixed]"
+    )
+    parts.append("[mixed]loudnorm=I=-16:TP=-1.5:LRA=11[aout]")
+    return ";".join(parts)
 
 
 def _run_ffmpeg(cmd: list[str], total_duration: float | None = None, progress_cb=None):
@@ -150,7 +184,7 @@ def _run_ffmpeg(cmd: list[str], total_duration: float | None = None, progress_cb
 
 
 def enhance(input_path: str, output_path: str, lut_path: str = DEFAULT_LUT, ass_path: str | None = None,
-            progress_cb=None, zooms: list[dict] | None = None):
+            progress_cb=None, zooms: list[dict] | None = None, sfx: list[dict] | None = None):
     mean_luma = measure_mean_luma(input_path)
     eq = adaptive_eq_params(mean_luma)
 
@@ -158,11 +192,25 @@ def enhance(input_path: str, output_path: str, lut_path: str = DEFAULT_LUT, ass_
     if zooms:
         w, h = get_video_dims(input_path)
         zoom = build_zoom_filter(zooms, w, h, get_fps(input_path))
-    print(f"[enhance] mean luma={mean_luma:.1f} -> eq={eq}, {len(zooms or [])} zooms")
 
-    filter_complex = build_video_filter(eq, lut_path, ass_path, zoom) + ";" + build_audio_filter()
+    # One -i per distinct effect file; asplit fans it out to each hit.
+    sfx_args, sfx_inputs = [], {}
+    for name in dict.fromkeys(e["name"] for e in sfx or []):
+        path = SFX_DIR / f"{name}.wav"
+        if not path.exists():
+            print(f"[enhance] missing effect {path}, skipping it")
+            continue
+        # count inputs, not argv entries -- each -i contributes two of the latter
+        sfx_inputs[name] = len(sfx_inputs) + 1
+        sfx_args += ["-i", str(path)]
+    usable = [e for e in (sfx or []) if e["name"] in sfx_inputs]
+    print(f"[enhance] mean luma={mean_luma:.1f} -> eq={eq}, "
+          f"{len(zooms or [])} zooms, {len(usable)} sfx")
+
+    filter_complex = (build_video_filter(eq, lut_path, ass_path, zoom) + ";"
+                      + build_audio_filter(usable, sfx_inputs))
     cmd = [
-        "ffmpeg", "-y", "-i", input_path,
+        "ffmpeg", "-y", "-i", input_path, *sfx_args,
         "-filter_complex", filter_complex,
         "-map", "[vout]", "-map", "[aout]",
         "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac",
@@ -193,15 +241,16 @@ if __name__ == "__main__":
     p.add_argument("--lut", default=DEFAULT_LUT)
     p.add_argument("--ass", default=None)
     p.add_argument("--compare", action="store_true")
-    p.add_argument("--plan", default=None, help="edit_plan.json -- zoom nuqtalari shundan olinadi")
+    p.add_argument("--plan", default=None, help="edit_plan.json -- zoom va sfx shundan olinadi")
     args = p.parse_args()
 
-    zooms = None
+    zooms = sfx = None
     if args.plan:
         import json
-        zooms = json.loads(Path(args.plan).read_text(encoding="utf-8")).get("zooms")
+        plan = json.loads(Path(args.plan).read_text(encoding="utf-8"))
+        zooms, sfx = plan.get("zooms"), plan.get("sfx")
 
-    enhance(args.input, args.output, lut_path=args.lut, ass_path=args.ass, zooms=zooms)
+    enhance(args.input, args.output, lut_path=args.lut, ass_path=args.ass, zooms=zooms, sfx=sfx)
     if args.compare:
         compare_path = str(Path(args.output).with_name(Path(args.output).stem + "_compare.mp4"))
         make_compare(args.input, args.output, compare_path)

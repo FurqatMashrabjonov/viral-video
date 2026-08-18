@@ -30,7 +30,7 @@ def _cpu_seconds() -> float:
 
 
 def run_pipeline(input_path: str, style_name: str = "warm_karaoke", language_code: str = "uzb",
-                  lut_path: str | None = None, progress_cb=None, enrich: bool = True) -> dict:
+                  lut_path: str | None = None, progress_cb=None, enrich: bool = True, sfx: bool = True) -> dict:
     OUTPUT_DIR.mkdir(exist_ok=True)
     job_stem = Path(input_path).stem
     output_path = OUTPUT_DIR / f"{job_stem}_out.mp4"
@@ -59,6 +59,7 @@ def run_pipeline(input_path: str, style_name: str = "warm_karaoke", language_cod
             ass_path=str(ass_path),
             progress_cb=progress_cb,
             zooms=plan["zooms"],
+            sfx=plan["sfx"] if sfx else None,
         )
 
     cpu_seconds = _cpu_seconds() - cpu_start

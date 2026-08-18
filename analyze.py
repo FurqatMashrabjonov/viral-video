@@ -83,6 +83,23 @@ def plan_zooms(words: list[dict], cuts_on_new_timeline: list[float]) -> list[dic
     return zooms
 
 
+SFX_MIN_SPACING = 1.5   # closer than this and emphasis turns into a rattle
+
+
+def plan_sfx(words: list[dict], min_spacing: float = SFX_MIN_SPACING) -> list[dict]:
+    """One hit per emphasised word: a chime on numbers, a blip on everything else."""
+    events, last = [], -min_spacing
+    for w in words:
+        if not w.get("keyword") or w["start"] - last < min_spacing:
+            continue
+        events.append({
+            "time": round(w["start"], 3),
+            "name": "ding" if _HAS_DIGIT.search(w["word"]) else "pop",
+        })
+        last = w["start"]
+    return events
+
+
 def build_edit_plan(words: list[dict], source_duration: float, cut_silence: bool = True) -> dict:
     cuts = find_silences(words) if cut_silence else []
     new_words = mark_keywords(remap_words(words, cuts))
@@ -94,6 +111,7 @@ def build_edit_plan(words: list[dict], source_duration: float, cut_silence: bool
         "cuts": cuts,
         "words": new_words,
         "zooms": plan_zooms(new_words, cut_marks),
+        "sfx": plan_sfx(new_words),
         "hook": None,  # filled by llm_enrich()
     }
 
@@ -180,7 +198,9 @@ def llm_enrich(plan: dict, model: str = "gemini-3.5-flash", max_retries: int = 3
         if _key(w["word"]) in wanted:
             w["keyword"] = True
 
-    plan["zooms"] = plan_zooms(plan["words"], [remap_time(c["start"], plan["cuts"]) for c in plan["cuts"]])
+    cut_marks = [remap_time(c["start"], plan["cuts"]) for c in plan["cuts"]]
+    plan["zooms"] = plan_zooms(plan["words"], cut_marks)
+    plan["sfx"] = plan_sfx(plan["words"])
     print(f"[analyze] hook: {plan['hook']['text']!r}, {sum(w['keyword'] for w in plan['words'])} keywords")
     return plan
 

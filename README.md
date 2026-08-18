@@ -104,11 +104,26 @@ har bir so'z vaqti qayta hisoblanadi (`remap_time`); bu yerdagi xato subtitrni
 butun videoda siljitadi, shuning uchun `test_analyze.py` shu matematikani
 alohida qamrab oladi.
 
+## Sound effect qo'shish
+
+`tools/make_sfx.py` uchta effekt generatsiya qiladi (`sfx/pop.wav`, `whoosh.wav`,
+`ding.wav`) — ffmpeg sintezidan, o'z yasalgan, CC0. Har biri ikki bosqichda
+quriladi: avval render, keyin cho'qqi o'lchanadi va **-6 dB** ga normalizatsiya
+qilinadi, aks holda sintezlar 20 dB dan ortiq farq qiladi va bitta effektga
+sozlangan miks darajasi qolganlarini eshitilmas qiladi. Shovqin manbasiga
+`seed` berilgan, shuning uchun build takrorlanuvchan.
+
+Effektlar `analyze.py` belgilagan kalit so'zlarga tushadi: raqamga `ding`,
+qolganiga `pop`, kamida 1.5 soniya oraliq bilan. Miks darajasi
+`enhance.SFX_VOLUME` (standart 0.35). O'chirish: `run_pipeline(..., sfx=False)`.
+
 ## Testlar
 
 ```bash
 .venv/bin/python test_normalize.py        # apostrof/kod-almashish testlari
 .venv/bin/python test_analyze.py          # kesim, vaqt remap, zoom oraliq
+.venv/bin/python test_subtitles.py        # kalit so'z teglari, hook
+.venv/bin/python test_enhance.py          # zoom ifodasi, sfx audio grafi
 .venv/bin/python test_pipeline_smoke.py   # 5s sintetik klip, Scribe mock qilingan
 ```
 

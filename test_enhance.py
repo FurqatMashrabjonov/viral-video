@@ -6,7 +6,7 @@ known-size box and measuring it: 1.000x outside the window, 1.225x mid-ramp,
 
 Run: .venv/bin/python test_enhance.py
 """
-from enhance import build_zoom_expr, build_zoom_filter, build_video_filter
+from enhance import build_zoom_expr, build_zoom_filter, build_video_filter, build_audio_filter
 
 ZOOMS = [
     {"start": 2.0, "end": 3.2, "scale": 1.30},
@@ -77,6 +77,52 @@ def test_graph_still_connects_when_there_is_no_zoom():
     eq = {"brightness": 0.0, "contrast": 1.0}
     g = build_video_filter(eq, "luts/warm_standard.cube", None, "")
     assert "[zoomed]" in g and "[vout]" in g
+
+
+SFX = [{"time": 1.0, "name": "pop"}, {"time": 3.5, "name": "ding"}, {"time": 6.0, "name": "pop"}]
+SFX_INPUTS = {"pop": 1, "ding": 2}
+
+
+def test_audio_chain_without_sfx_is_speech_then_loudnorm():
+    f = build_audio_filter()
+    assert "amix" not in f
+    assert f.index("acompressor") < f.index("loudnorm")
+
+
+def test_amix_disables_normalisation():
+    """amix divides every input by the input count unless told not to, which
+    would silently drop the speech by 1/N."""
+    assert "normalize=0" in build_audio_filter(SFX, SFX_INPUTS)
+
+
+def test_amix_input_count_matches_speech_plus_every_hit():
+    f = build_audio_filter(SFX, SFX_INPUTS)
+    assert f"amix=inputs={1 + len(SFX)}" in f
+
+
+def test_one_delay_per_hit_at_the_right_millisecond():
+    f = build_audio_filter(SFX, SFX_INPUTS)
+    for e in SFX:
+        assert f"adelay={int(e['time'] * 1000)}:all=1" in f
+
+
+def test_repeated_effect_is_split_not_reopened():
+    """pop fires twice but the file is only decoded once."""
+    f = build_audio_filter(SFX, SFX_INPUTS)
+    assert f.count("[1:a]") == 1
+    assert "asplit=2" in f
+
+
+def test_loudnorm_runs_after_the_mix():
+    """Effects must be inside the normalised mix, or they push the true peak
+    past -1.5 dBTP afterwards."""
+    f = build_audio_filter(SFX, SFX_INPUTS)
+    assert f.index("amix") < f.index("loudnorm")
+
+
+def test_effects_are_not_run_through_the_speech_cleanup():
+    f = build_audio_filter(SFX, SFX_INPUTS)
+    assert f.index("acompressor") < f.index("[1:a]"), "denoise would dull the effects"
 
 
 if __name__ == "__main__":

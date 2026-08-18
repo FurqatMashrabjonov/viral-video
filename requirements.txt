@@ -1,0 +1,8 @@
+httpx
+python-dotenv
+pysubs2
+pyyaml
+fastapi
+uvicorn[standard]
+python-multipart
+google-genai

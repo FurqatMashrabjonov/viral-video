@@ -1,0 +1,132 @@
+# uzcaption
+
+O'zbek tilidagi talking-head videolarni tozalab, rang grading qilib, so'z-so'z
+animatsion subtitr bilan qaytaradigan backend (MVP).
+
+## Setup
+
+```bash
+python3.11 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+```
+
+`ffmpeg` (libass bilan) va `ffprobe` PATH da bo'lishi shart:
+
+```bash
+brew install ffmpeg   # macOS
+ffmpeg -version | grep libass   # tekshirish
+```
+
+### `.env`
+
+```
+ELEVENLABS_API_KEY=your-key-here
+GEMINI_API_KEY=your-key-here
+```
+
+`.env.example` ga qarang. `.env` gitga commit qilinmaydi (`.gitignore` da bor).
+
+`ELEVENLABS_API_KEY` majburiy (transkripsiya). `GEMINI_API_KEY` ixtiyoriy — usiz
+`analyze.py` heuristika rejimida ishlaydi (kesim, zoom, raqam-kalit so'zlar), faqat
+hook sarlavha va semantik kalit so'zlar chiqmaydi.
+
+## CLI orqali ishlatish
+
+```bash
+# yakka enhance (audio+rang+subtitr), --compare bilan yonma-yon video ham chiqadi
+.venv/bin/python enhance.py input.mp4 output.mp4 --ass output/my.ass --compare
+
+# to'liq pipeline: Scribe -> normalize -> ASS -> enhance, bitta chaqiruvda
+.venv/bin/python -c "from pipeline import run_pipeline; print(run_pipeline('input.mp4', style_name='warm_karaoke'))"
+```
+
+## API orqali ishlatish
+
+```bash
+.venv/bin/uvicorn api:app --reload
+```
+
+`http://127.0.0.1:8000/` — brauzerda ochiladigan test UI (video yukla, style
+tanla, natijani ko'r).
+
+Endpointlar:
+
+| Method | Path | Vazifa |
+|---|---|---|
+| POST | `/process` | video yuklash (`file`, `style`), `{"job_id"}` qaytaradi |
+| GET | `/status/{id}` | `{"status", "progress", "error"}` |
+| GET | `/result/{id}` | tayyor video (mp4) |
+| GET | `/result/{id}/metadata` | duration, word_count, cost |
+
+Navbat hozircha bitta ishchi bilan in-process (`ThreadPoolExecutor`). Ko'p
+ishchi/qayta ishga tushganda saqlanishi kerak bo'lsa — Celery/RQ ga
+o'tkaziladi (kodda `ponytail:` izohi bilan belgilangan).
+
+## Yangi style qo'shish
+
+`styles/*.yaml` — style = data, kod emas. Namuna uchun
+`styles/warm_karaoke.yaml` ga qarang. Maydonlar: `mode` (`karaoke` yoki
+`pop`), `font`/`font_bold`, `font_size`, ranglar (`[r,g,b]`), `outline_width`,
+`margin_v`/`margin_h`, qatorlash (`max_words_per_line`, `max_chars_per_line`)
+yoki pop animatsiyasi (`pop_duration_ms`, `pop_scale_from`).
+
+Yangi shrift kerak bo'lsa — `fonts/` papkaga qo'shib, style yaml da
+`font`/`font_bold` nomini fayl ichidagi shrift nomiga moslashtiring
+(`fc-scan fonts/X.ttf | grep family` bilan tekshiring). Oʻzbek belgilar
+(`ʻ`, kirill Ў/Қ/Ғ/Ҳ) borligini `fontTools` bilan tasdiqlang.
+
+## Yangi LUT qo'shish
+
+`tools/make_lut.py` — 3 ta placeholder warm LUT generatsiya qiladi
+(`luts/*.cube`, 33³, o'z yasalgan, CC0). Qo'lda grading qilingan LUT
+qo'shsangiz, faylni `luts/` ga qo'ying va `enhance.py --lut path/to.cube`
+yoki `run_pipeline(..., lut_path=...)` bilan ko'rsating. Faqat CC0/o'z
+LUT — litsenziyasi noaniq LUT ishlatilmaydi.
+
+## Edit plan (`analyze.py`)
+
+Scribe so'z vaqtlaridan tahrir rejasini quradi — render'dan **oldin** ko'z bilan
+tekshirish mumkin bo'lgan JSON:
+
+```python
+from analyze import build_edit_plan, llm_enrich, save_plan
+plan = build_edit_plan(words, source_duration=90.0)
+plan = llm_enrich(plan)          # ixtiyoriy: hook + semantik kalit so'zlar
+save_plan(plan, "output/edit_plan.json")
+```
+
+Reja tarkibi: `cuts` (jimlik kesimlari), `words` (kesilgan timeline'ga
+ko'chirilgan, `keyword` bayrog'i bilan), `zooms`, `hook`.
+
+Jimlik alohida `silencedetect` passisiz aniqlanadi — Scribe'ning so'z vaqtlari
+orasidagi bo'shliq ta'rifi bo'yicha jimlik. Kesim timeline'ni qisqartirgani uchun
+har bir so'z vaqti qayta hisoblanadi (`remap_time`); bu yerdagi xato subtitrni
+butun videoda siljitadi, shuning uchun `test_analyze.py` shu matematikani
+alohida qamrab oladi.
+
+## Testlar
+
+```bash
+.venv/bin/python test_normalize.py        # apostrof/kod-almashish testlari
+.venv/bin/python test_analyze.py          # kesim, vaqt remap, zoom oraliq
+.venv/bin/python test_pipeline_smoke.py   # 5s sintetik klip, Scribe mock qilingan
+```
+
+## Xarajat logi
+
+Har bir `run_pipeline()` chaqiruvi `logs/cost_log.jsonl` ga bitta qator
+qo'shadi: Scribe daqiqa/narx + ffmpeg CPU soniya/narx + jami USD/UZS
+(`cost.py`). UZS kursi va CPU narxi placeholder — real infratuzilma
+narxlariga moslashtiring.
+
+## Demo skriptlar (rivojlanish jarayonida yozilgan)
+
+- `demo_milestone2.py` — normalize -> ASS -> ffmpeg burn (karaoke + pop)
+- `demo_milestone3.py` — sintetik qorong'i/shovqinli klip -> enhance -> compare
+- `demo_milestone4.py` — FastAPI to'liq oqim, Scribe mock qilingan
+
+## Nima qurilmagan (backlog, keyingi bosqichlar)
+
+To'lov (Payme/Click), GPT-4o fallback, face tracking/auto-zoom, GPU asosli
+studio yoritish, B-roll, sound effects — asl reja bo'yicha ataylab
+qurilmagan.

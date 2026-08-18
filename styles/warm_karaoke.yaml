@@ -1,0 +1,14 @@
+mode: karaoke
+font: Noto Sans
+font_bold: Noto Sans Bold
+font_size: 72
+bold: true
+primary_color: [255, 255, 255]
+secondary_color: [255, 176, 59]
+outline_color: [0, 0, 0]
+outline_width: 3
+shadow: 0
+margin_v: 220
+margin_h: 60
+max_words_per_line: 4
+max_chars_per_line: 24

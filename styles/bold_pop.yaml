@@ -1,0 +1,13 @@
+mode: pop
+font: Noto Sans
+font_bold: Noto Sans Bold
+font_size: 84
+bold: true
+primary_color: [255, 214, 0]
+outline_color: [0, 0, 0]
+outline_width: 6
+shadow: 0
+margin_v: 260
+margin_h: 50
+pop_duration_ms: 120
+pop_scale_from: 130

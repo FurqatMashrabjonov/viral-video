@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="uz">
+<head>
+<meta charset="utf-8">
+<title>uzcaption test</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 480px; margin: 40px auto; padding: 0 16px; }
+  h1 { font-size: 20px; }
+  label { display: block; margin-top: 16px; font-weight: 600; }
+  input, select, button { width: 100%; padding: 8px; margin-top: 4px; box-sizing: border-box; }
+  button { margin-top: 20px; cursor: pointer; }
+  #status { margin-top: 16px; font-family: monospace; white-space: pre-wrap; }
+  progress { width: 100%; margin-top: 8px; }
+  video { width: 100%; margin-top: 16px; }
+  #meta { font-family: monospace; font-size: 13px; margin-top: 8px; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+  <h1>uzcaption — test UI</h1>
+
+  <form id="f">
+    <label>Video (9:16, 15-90s)
+      <input type="file" name="file" accept="video/*" required>
+    </label>
+    <label>Style
+      <select name="style">
+        <option value="warm_karaoke">warm_karaoke</option>
+        <option value="bold_pop">bold_pop</option>
+        <option value="clean_minimal">clean_minimal</option>
+      </select>
+    </label>
+    <button type="submit">Process</button>
+  </form>
+
+  <div id="status"></div>
+  <progress id="bar" value="0" max="1" style="display:none"></progress>
+  <video id="out" controls style="display:none"></video>
+  <div id="meta"></div>
+
+<script>
+const f = document.getElementById('f');
+const statusEl = document.getElementById('status');
+const bar = document.getElementById('bar');
+const out = document.getElementById('out');
+const metaEl = document.getElementById('meta');
+
+f.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  statusEl.textContent = 'uploading...';
+  bar.style.display = 'block';
+  bar.value = 0;
+  out.style.display = 'none';
+  metaEl.textContent = '';
+
+  const resp = await fetch('/process', { method: 'POST', body: new FormData(f) });
+  if (!resp.ok) {
+    statusEl.textContent = 'error: ' + await resp.text();
+    return;
+  }
+  const { job_id } = await resp.json();
+  statusEl.textContent = 'job ' + job_id + ' queued';
+
+  const poll = setInterval(async () => {
+    const s = await (await fetch('/status/' + job_id)).json();
+    bar.value = s.progress || 0;
+    statusEl.textContent = 'status: ' + s.status + '  (' + Math.round((s.progress || 0) * 100) + '%)';
+
+    if (s.status === 'done') {
+      clearInterval(poll);
+      out.src = '/result/' + job_id;
+      out.style.display = 'block';
+      const meta = await (await fetch('/result/' + job_id + '/metadata')).json();
+      metaEl.textContent = JSON.stringify(meta, null, 2);
+    } else if (s.status === 'error') {
+      clearInterval(poll);
+      statusEl.textContent = 'error: ' + s.error;
+    }
+  }, 1000);
+});
+</script>
+</body>
+</html>

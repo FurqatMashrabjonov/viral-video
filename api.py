@@ -16,6 +16,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Body, Request
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 
 import db
 from pipeline import run_pipeline, ingest, render, DEFAULT_SETTINGS
@@ -39,8 +40,25 @@ STREAM_TIMEOUT = 300.0  # give up on a stream that has been silent this long
 db.init()
 
 
+APP_DIR = Path("static/app")   # built frontend bundle, written by `npm run build`
+
+
 @app.get("/", response_class=HTMLResponse)
 async def index():
+    """The React bundle when it has been built, otherwise the plain test page.
+    Keeping the fallback means the backend is usable without a Node toolchain."""
+    built = APP_DIR / "index.html"
+    if built.exists():
+        return built.read_text(encoding="utf-8")
+    return Path("static/index.html").read_text(encoding="utf-8")
+
+
+if APP_DIR.exists():
+    app.mount("/assets", StaticFiles(directory=APP_DIR / "assets"), name="assets")
+
+
+@app.get("/legacy", response_class=HTMLResponse)
+async def legacy_index():
     return Path("static/index.html").read_text(encoding="utf-8")
 
 
@@ -193,9 +211,15 @@ async def api_stream(project_id: str, request: Request, after: int = 0):
 
 @app.get("/api/schema")
 async def api_schema():
-    """Every control the user has, declared once in settings.py. The frontend
-    draws its panel from this rather than keeping a second list of its own."""
-    return {"fields": settings_schema(), "defaults": DEFAULT_SETTINGS}
+    """Every control the user has, declared once in settings.py, plus the stage
+    names. The frontend draws its panel and its progress checklist from this
+    rather than keeping second copies of either."""
+    return {
+        "fields": settings_schema(),
+        "defaults": DEFAULT_SETTINGS,
+        "stages": db.STAGES,
+        "terminal_stages": sorted(db.TERMINAL_STAGES),
+    }
 
 
 # --- legacy single-shot flow (the existing test UI) --------------------------

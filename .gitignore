@@ -15,3 +15,5 @@ logs/
 luts/*
 !luts/*.cube
 data/
+web/node_modules/
+static/app/

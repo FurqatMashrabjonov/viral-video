@@ -5,8 +5,11 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { PipelineView } from "@/components/PipelineView"
 import { ProjectList } from "@/components/ProjectList"
+import { RenderResult } from "@/components/RenderResult"
+import { SettingsPanel } from "@/components/SettingsPanel"
 import { UploadCard } from "@/components/UploadCard"
 import { useStream } from "@/lib/useStream"
 import { api, type Project, type ProjectDetail, type Schema } from "@/lib/api"
@@ -24,6 +27,12 @@ export default function App() {
     setProjects(await api.projects())
   }, [])
 
+  const refreshDetail = useCallback(async () => {
+    if (!selectedId) return setDetail(null)
+    setDetail(await api.project(selectedId))
+    void refreshProjects()
+  }, [selectedId, refreshProjects])
+
   useEffect(() => {
     void api.schema().then(setSchema)
     void refreshProjects()
@@ -32,10 +41,8 @@ export default function App() {
   // Reload the project whenever the stream settles, so the transcript and the
   // render list reflect what just finished.
   useEffect(() => {
-    if (!selectedId) return setDetail(null)
-    void api.project(selectedId).then(setDetail)
-    void refreshProjects()
-  }, [selectedId, done, refreshProjects])
+    void refreshDetail()
+  }, [selectedId, done, refreshDetail])
 
   return (
     <div className="min-h-svh bg-background text-foreground">
@@ -88,40 +95,66 @@ export default function App() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
-                <PipelineView stages={schema.stages} events={events} />
+                <Tabs defaultValue="progress">
+                  <TabsList className="grid w-full grid-cols-4">
+                    <TabsTrigger value="progress">Jarayon</TabsTrigger>
+                    <TabsTrigger value="sozlamalar">Sozlamalar</TabsTrigger>
+                    <TabsTrigger value="natija">Natija</TabsTrigger>
+                    <TabsTrigger value="transkript">Transkript</TabsTrigger>
+                  </TabsList>
 
-                {detail?.plan && (
-                  <>
-                    <Separator />
-                    <div className="space-y-2">
-                      {detail.plan.hook && (
-                        <p className="text-sm">
-                          <span className="text-muted-foreground">Hook: </span>
-                          <span className="font-medium">{detail.plan.hook.text}</span>
+                  <TabsContent value="progress" className="pt-4">
+                    <PipelineView stages={schema.stages} events={events} />
+                  </TabsContent>
+
+                  <TabsContent value="sozlamalar" className="pt-4">
+                    <SettingsPanel
+                      schema={schema}
+                      projectId={selectedId}
+                      onRender={() => void refreshDetail()}
+                    />
+                  </TabsContent>
+
+                  <TabsContent value="natija" className="pt-4">
+                    {detail ? (
+                      <RenderResult renders={detail.renders} />
+                    ) : (
+                      <p className="text-sm text-muted-foreground">Yuklanmoqda…</p>
+                    )}
+                  </TabsContent>
+
+                  <TabsContent value="transkript" className="pt-4">
+                    {detail?.plan && (
+                      <div className="space-y-3">
+                        {detail.plan.hook && (
+                          <p className="text-sm">
+                            <span className="text-muted-foreground">Hook: </span>
+                            <span className="font-medium">{detail.plan.hook.text}</span>
+                          </p>
+                        )}
+                        <Separator />
+                        <p className="text-sm leading-relaxed">
+                          {detail.plan.words.map((w, i) => (
+                            <span
+                              key={i}
+                              className={
+                                w.keyword
+                                  ? "rounded bg-emerald-500/15 px-1 font-medium text-emerald-700 dark:text-emerald-300"
+                                  : undefined
+                              }
+                            >
+                              {w.word}{" "}
+                            </span>
+                          ))}
                         </p>
-                      )}
-                      <p className="text-sm leading-relaxed">
-                        {detail.plan.words.map((w, i) => (
-                          <span
-                            key={i}
-                            className={
-                              w.keyword
-                                ? "rounded bg-emerald-500/15 px-1 font-medium text-emerald-700 dark:text-emerald-300"
-                                : undefined
-                            }
-                          >
-                            {w.word}{" "}
-                          </span>
-                        ))}
-                      </p>
-                      <p className="text-xs text-muted-foreground tabular-nums">
-                        {detail.plan.words.length} so'z ·{" "}
-                        {detail.plan.words.filter((w) => w.keyword).length} kalit so'z ·{" "}
-                        {detail.renders.length} render
-                      </p>
-                    </div>
-                  </>
-                )}
+                        <p className="text-xs text-muted-foreground tabular-nums">
+                          {detail.plan.words.length} so'z ·{" "}
+                          {detail.plan.words.filter((w) => w.keyword).length} kalit so'z
+                        </p>
+                      </div>
+                    )}
+                  </TabsContent>
+                </Tabs>
               </CardContent>
             </Card>
           )}

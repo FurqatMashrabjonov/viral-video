@@ -1,0 +1,12 @@
+.venv
+data
+output
+uploads
+logs
+web/node_modules
+web/dist
+static/app
+*.mp4
+*.png
+.env
+.DS_Store

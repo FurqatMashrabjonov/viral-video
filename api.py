@@ -17,6 +17,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 
 import db
 from pipeline import run_pipeline, ingest, render, DEFAULT_SETTINGS
+from settings import schema as settings_schema, merge as merge_settings
 
 UPLOAD_DIR = Path("uploads")
 UPLOAD_DIR.mkdir(exist_ok=True)
@@ -94,7 +95,7 @@ async def api_render(project_id: str, settings: dict = Body(default={})):
     if not db.get_plan(project_id):
         raise HTTPException(409, "project has no plan yet")
 
-    merged = {**DEFAULT_SETTINGS, **settings}
+    merged = merge_settings(settings)
     # Create the row up front so the client gets an id it can poll immediately,
     # rather than after the render finishes.
     render_id = db.create_render(project_id, merged)
@@ -128,9 +129,11 @@ async def api_render_video(render_id: str):
     return FileResponse(row["output_path"], media_type="video/mp4")
 
 
-@app.get("/api/settings/defaults")
-async def api_default_settings():
-    return DEFAULT_SETTINGS
+@app.get("/api/schema")
+async def api_schema():
+    """Every control the user has, declared once in settings.py. The frontend
+    draws its panel from this rather than keeping a second list of its own."""
+    return {"fields": settings_schema(), "defaults": DEFAULT_SETTINGS}
 
 
 # --- legacy single-shot flow (the existing test UI) --------------------------

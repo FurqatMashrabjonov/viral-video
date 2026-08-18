@@ -67,17 +67,24 @@ def mark_keywords(words: list[dict]) -> list[dict]:
     return out
 
 
-def plan_zooms(words: list[dict], cuts_on_new_timeline: list[float]) -> list[dict]:
-    """Punch in on keywords and just after each cut, spaced so it doesn't pulse."""
+def plan_zooms(words: list[dict], cuts_on_new_timeline: list[float],
+               spacing: float = MIN_ZOOM_SPACING, duration: float = ZOOM_DURATION,
+               scale: float = ZOOM_SCALE) -> list[dict]:
+    """Punch in on keywords and just after each cut, spaced so it doesn't pulse.
+
+    Pure function of the words plus these three numbers, which is what lets the
+    renderer recompute zoom placement from changed settings without going back
+    to Scribe.
+    """
     candidates = [w["start"] for w in words if w.get("keyword")] + cuts_on_new_timeline
-    zooms, last = [], -MIN_ZOOM_SPACING
+    zooms, last = [], -spacing
     for t in sorted(candidates):
-        if t - last < MIN_ZOOM_SPACING:
+        if t - last < spacing:
             continue
         zooms.append({
             "start": round(t, 3),
-            "end": round(t + ZOOM_DURATION, 3),
-            "scale": ZOOM_SCALE,
+            "end": round(t + duration, 3),
+            "scale": scale,
         })
         last = t
     return zooms

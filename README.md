@@ -60,7 +60,7 @@ Endpointlar:
 | POST | `/api/projects/{id}/render` | sozlamalar bilan render, `{"render_id"}` |
 | GET | `/api/renders/{id}` | holat, progress, sozlamalar |
 | GET | `/api/renders/{id}/video` | tayyor video (mp4) |
-| GET | `/api/settings/defaults` | standart sozlamalar |
+| GET | `/api/schema` | sozlamalar sxemasi + standartlar |
 
 Eski bir martalik oqim ham ishlaydi (`/process`, `/status/{id}`,
 `/result/{id}`) — mavjud test UI shundan foydalanadi.
@@ -116,6 +116,28 @@ soni hali ham 1 bo'lishi kerak.
 Xarajat logi ikkalasini alohida yozadi — `INGEST` qatorida Scribe narxi,
 `RENDER` qatorida faqat CPU.
 
+## Sozlamalar (`settings.py`)
+
+Foydalanuvchi boshqaradigan har bir narsa **bitta joyda** e'lon qilinadi:
+`settings.py`. `GET /api/schema` uni JSON sifatida beradi, frontend shundan
+boshqaruvlarni chizadi. Ikkinchi ro'yxat yuritilsa, u albatta uzoqlashadi va
+natija "tugma bor, lekin hech nimaga ta'sir qilmaydi" bo'ladi.
+
+21 maydon, 6 guruh: Subtitr, Hook, Zoom, Effekt, Rang, Audio.
+
+`merge()` — ishonch chegarasi. Qiymatlar HTTP orqali keladi va ffmpeg filter
+grafiga tushadi, shuning uchun: raqamlar e'lon qilingan oraliqqa qisiladi,
+select faqat diskda mavjud faylni nomlashi mumkin, notanish kalitlar tashlab
+yuboriladi.
+
+Maydon bu yerga faqat render uni **haqiqatan qo'llaganda** qo'shiladi.
+`cut_silence` ataylab yo'q — `analyze.py` kesimlarni hisoblay oladi, lekin
+`enhance.py` ularni qo'llamaydi.
+
+Zoom va sfx joylashuvi so'zlarning sof funksiyasi, shuning uchun render paytida
+joriy sozlamalardan **qayta hisoblanadi** — oraliqni o'zgartirish Scribe'ga
+qaytishni talab qilmaydi.
+
 ## Edit plan (`analyze.py`)
 
 Scribe so'z vaqtlaridan tahrir rejasini quradi — render'dan **oldin** ko'z bilan
@@ -157,6 +179,7 @@ qolganiga `pop`, kamida 1.5 soniya oraliq bilan. Miks darajasi
 .venv/bin/python test_analyze.py          # kesim, vaqt remap, zoom oraliq
 .venv/bin/python test_subtitles.py        # kalit so'z teglari, hook
 .venv/bin/python test_enhance.py          # zoom ifodasi, sfx audio grafi
+.venv/bin/python test_settings.py         # sxema butunligi, qiymat validatsiyasi
 .venv/bin/python test_pipeline_smoke.py   # 5s sintetik klip, Scribe mock qilingan
 ```
 

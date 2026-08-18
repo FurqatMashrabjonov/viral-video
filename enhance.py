@@ -99,18 +99,28 @@ def build_zoom_filter(zooms: list[dict], width: int, height: int, fps: float) ->
     )
 
 
-def build_video_filter(eq: dict, lut_path: str, ass_path: str | None, zoom: str = "") -> str:
+def build_video_filter(eq: dict, lut_path: str, ass_path: str | None, zoom: str = "",
+                       lut_strength: float = LUT_OPACITY, denoise: bool = True,
+                       vignette: bool = True, grade: bool = True) -> str:
+    head = "hqdn3d=2:1.5:3:3," if denoise else ""
     graph = (
-        f"[0:v]hqdn3d=2:1.5:3:3,eq=brightness={eq['brightness']}:contrast={eq['contrast']}[eqd];"
-        f"[eqd]split=2[orig][forlut];"
-        f"[forlut]lut3d=file='{lut_path}'[graded];"
-        f"[orig][graded]blend=all_mode=normal:all_opacity={LUT_OPACITY}[blended]"
+        f"[0:v]{head}eq=brightness={eq['brightness']}:contrast={eq['contrast']}[eqd]"
     )
+
+    if grade and lut_strength > 0:
+        graph += (
+            f";[eqd]split=2[orig][forlut]"
+            f";[forlut]lut3d=file='{lut_path}'[graded]"
+            f";[orig][graded]blend=all_mode=normal:all_opacity={lut_strength}[blended]"
+        )
+    else:
+        graph += ";[eqd]copy[blended]"
+
     # Zoom sits after the grade but before the vignette and the captions: the
     # vignette belongs to the frame edge, and captions must not scale with the
     # picture.
     graph += f";[blended]{zoom}[zoomed]" if zoom else ";[blended]copy[zoomed]"
-    graph += ";[zoomed]vignette=PI/6[v_graded]"
+    graph += ";[zoomed]vignette=PI/6[v_graded]" if vignette else ";[zoomed]copy[v_graded]"
 
     if ass_path:
         graph += f";[v_graded]ass='{ass_path}':fontsdir='{FONTS_DIR}'[vout]"
@@ -124,21 +134,22 @@ SFX_VOLUME = 0.35  # well under speech; these punctuate, they don't compete
 
 
 def build_audio_filter(sfx: list[dict] | None = None, sfx_inputs: dict | None = None,
-                       volume: float = SFX_VOLUME) -> str:
+                       volume: float = SFX_VOLUME, target_lufs: float = -16.0,
+                       cleanup: bool = True) -> str:
     """Speech cleanup, then the effect bed mixed in, then loudness normalisation.
 
     Denoise/high-pass/compression apply to the voice only -- running them over the
     effects would dull them. loudnorm goes last so the whole mix, effects
-    included, lands on -16 LUFS / -1.5 dBTP rather than the effects pushing the
-    true peak past it afterwards.
+    included, lands on the target rather than the effects pushing the true peak
+    past it afterwards.
     """
-    speech = (
-        "[0:a]afftdn=nr=12,"
-        "highpass=f=80,"
-        "acompressor=threshold=-18dB:ratio=3:attack=5:release=50[speech]"
-    )
+    chain = ("afftdn=nr=12,highpass=f=80,"
+             "acompressor=threshold=-18dB:ratio=3:attack=5:release=50" if cleanup else "anull")
+    speech = f"[0:a]{chain}[speech]"
+    norm = f"loudnorm=I={target_lufs:g}:TP=-1.5:LRA=11"
+
     if not sfx or not sfx_inputs:
-        return speech + ";[speech]loudnorm=I=-16:TP=-1.5:LRA=11[aout]"
+        return f"{speech};[speech]{norm}[aout]"
 
     parts, labels = [speech], []
     for name, idx in sfx_inputs.items():
@@ -158,7 +169,7 @@ def build_audio_filter(sfx: list[dict] | None = None, sfx_inputs: dict | None = 
     parts.append(
         f"[speech]{''.join(labels)}amix=inputs={1 + len(labels)}:normalize=0:duration=first[mixed]"
     )
-    parts.append("[mixed]loudnorm=I=-16:TP=-1.5:LRA=11[aout]")
+    parts.append(f"[mixed]{norm}[aout]")
     return ";".join(parts)
 
 
@@ -184,7 +195,10 @@ def _run_ffmpeg(cmd: list[str], total_duration: float | None = None, progress_cb
 
 
 def enhance(input_path: str, output_path: str, lut_path: str = DEFAULT_LUT, ass_path: str | None = None,
-            progress_cb=None, zooms: list[dict] | None = None, sfx: list[dict] | None = None):
+            progress_cb=None, zooms: list[dict] | None = None, sfx: list[dict] | None = None,
+            lut_strength: float = LUT_OPACITY, denoise: bool = True, vignette: bool = True,
+            grade: bool = True, sfx_volume: float = SFX_VOLUME, target_lufs: float = -16.0,
+            audio_cleanup: bool = True):
     mean_luma = measure_mean_luma(input_path)
     eq = adaptive_eq_params(mean_luma)
 
@@ -207,8 +221,13 @@ def enhance(input_path: str, output_path: str, lut_path: str = DEFAULT_LUT, ass_
     print(f"[enhance] mean luma={mean_luma:.1f} -> eq={eq}, "
           f"{len(zooms or [])} zooms, {len(usable)} sfx")
 
-    filter_complex = (build_video_filter(eq, lut_path, ass_path, zoom) + ";"
-                      + build_audio_filter(usable, sfx_inputs))
+    filter_complex = (
+        build_video_filter(eq, lut_path, ass_path, zoom, lut_strength=lut_strength,
+                           denoise=denoise, vignette=vignette, grade=grade)
+        + ";"
+        + build_audio_filter(usable, sfx_inputs, volume=sfx_volume,
+                             target_lufs=target_lufs, cleanup=audio_cleanup)
+    )
     cmd = [
         "ffmpeg", "-y", "-i", input_path, *sfx_args,
         "-filter_complex", filter_complex,

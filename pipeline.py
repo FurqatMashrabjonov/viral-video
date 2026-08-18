@@ -18,20 +18,29 @@ from scribe import transcribe, COST_PER_MINUTE_USD
 from normalize import normalize_words
 from subtitles import build_ass, load_style
 from enhance import enhance, get_video_dims, get_duration, get_fps
-from analyze import build_edit_plan, llm_enrich
+from analyze import build_edit_plan, llm_enrich, plan_zooms, plan_sfx
 from cost import log_cost
+from settings import merge as merge_settings, defaults as default_settings
 
 STYLES_DIR = Path("styles")
-DEFAULT_LUT = "luts/warm_standard.cube"
+LUTS_DIR = Path("luts")
 
-DEFAULT_SETTINGS = {
-    "style": "warm_karaoke",
-    "lut": DEFAULT_LUT,
-    "captions": True,
-    "hook": True,
-    "zoom": True,
-    "sfx": True,
-}
+DEFAULT_SETTINGS = default_settings()
+
+
+def _apply_style_settings(style: dict, settings: dict) -> dict:
+    """Scale the style's own numbers by the user's multipliers, and drop the
+    highlight config entirely when highlighting is switched off -- subtitles.py
+    emits no keyword tags when neither key is present."""
+    style = {
+        **style,
+        "font_size": round(style["font_size"] * settings["font_scale"]),
+        "margin_v": round(style.get("margin_v", 180) * settings["margin_scale"]),
+    }
+    if not settings["keyword_highlight"]:
+        style.pop("keyword_color", None)
+        style.pop("keyword_box", None)
+    return style
 
 
 def _extract_audio(video_path: str, out_wav: str):
@@ -117,7 +126,7 @@ def render(project_id: str, settings: dict | None = None, progress_cb=None,
     if not plan:
         raise ValueError(f"project {project_id} has no plan yet")
 
-    settings = {**DEFAULT_SETTINGS, **(settings or {})}
+    settings = merge_settings(settings)
     if render_id is None:
         render_id = db.create_render(project_id, settings)
     out_dir = db.MEDIA_DIR / project_id
@@ -132,12 +141,27 @@ def render(project_id: str, settings: dict | None = None, progress_cb=None,
         stage("subtitles")
         burn_ass = None
         if settings["captions"]:
-            style = load_style(str(STYLES_DIR / f"{settings['style']}.yaml"))
-            build_ass(
-                plan["words"], style, project["width"], project["height"],
-                hook=plan.get("hook") if settings["hook"] else None,
-            ).save(str(ass_path))
+            style = _apply_style_settings(
+                load_style(str(STYLES_DIR / f"{settings['style']}.yaml")), settings
+            )
+            hook = plan.get("hook")
+            if hook and settings["hook"]:
+                hook = {**hook, "end": hook.get("start", 0.0) + settings["hook_duration"]}
+            else:
+                hook = None
+            build_ass(plan["words"], style, project["width"], project["height"],
+                      hook=hook).save(str(ass_path))
             burn_ass = str(ass_path)
+
+        # Zoom and sfx placement is a pure function of the words plus a few
+        # numbers, so it is recomputed here from the current settings rather
+        # than read from the plan. Changing the spacing costs nothing.
+        zooms = sfx = None
+        if settings["zoom"]:
+            zooms = plan_zooms(plan["words"], [], spacing=settings["zoom_spacing"],
+                               duration=settings["zoom_duration"], scale=settings["zoom_scale"])
+        if settings["sfx"]:
+            sfx = plan_sfx(plan["words"], min_spacing=settings["sfx_spacing"])
 
         stage("render")
 
@@ -150,11 +174,18 @@ def render(project_id: str, settings: dict | None = None, progress_cb=None,
 
         enhance(
             project["source_path"], str(output_path),
-            lut_path=settings["lut"],
+            lut_path=str(LUTS_DIR / f"{settings['lut']}.cube"),
             ass_path=burn_ass,
             progress_cb=report,
-            zooms=plan.get("zooms") if settings["zoom"] else None,
-            sfx=plan.get("sfx") if settings["sfx"] else None,
+            zooms=zooms,
+            sfx=sfx,
+            lut_strength=settings["lut_strength"],
+            denoise=settings["denoise"],
+            vignette=settings["vignette"],
+            grade=settings["grade"],
+            sfx_volume=settings["sfx_volume"],
+            target_lufs=settings["target_lufs"],
+            audio_cleanup=settings["audio_cleanup"],
         )
         db.update_render(
             render_id, status="done", progress=1.0,
@@ -184,11 +215,10 @@ def run_pipeline(input_path: str, style_name: str = "warm_karaoke", language_cod
 
     project_id = ingest(str(stored), name=Path(input_path).stem,
                         language_code=language_code, enrich=enrich)
-    render_id = render(project_id, {
-        "style": style_name,
-        "lut": lut_path or DEFAULT_LUT,
-        "sfx": sfx,
-    }, progress_cb=progress_cb)
+    overrides = {"style": style_name, "sfx": sfx}
+    if lut_path:
+        overrides["lut"] = Path(lut_path).stem
+    render_id = render(project_id, overrides, progress_cb=progress_cb)
 
     project, plan, r = db.get_project(project_id), db.get_plan(project_id), db.get_render(render_id)
     return {

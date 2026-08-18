@@ -13,11 +13,12 @@ type Values = Record<string, boolean | number | string>
 type Props = {
   schema: Schema
   projectId: string
+  values: Values
+  onChange: (values: Values) => void
   onRender: (render: Render) => void
 }
 
-export function SettingsPanel({ schema, projectId, onRender }: Props) {
-  const [values, setValues] = useState<Values>(schema.defaults)
+export function SettingsPanel({ schema, projectId, values, onChange, onRender }: Props) {
   const [busy, setBusy] = useState(false)
 
   const groups: [string, Field[]][] = []
@@ -28,7 +29,7 @@ export function SettingsPanel({ schema, projectId, onRender }: Props) {
   }
 
   function set(key: string, value: boolean | number | string) {
-    setValues((v) => ({ ...v, [key]: value }))
+    onChange({ ...values, [key]: value })
   }
 
   async function renderNow() {

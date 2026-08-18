@@ -109,8 +109,14 @@ def ingest(source_path: str, name: str | None = None, language_code: str = "uzb"
 # --- phase B: as often as the user likes ------------------------------------
 
 def render(project_id: str, settings: dict | None = None, progress_cb=None,
-           stage_cb=None, render_id: str | None = None) -> str:
+           stage_cb=None, render_id: str | None = None,
+           segment: tuple[float, float] | None = None) -> str:
     """Render the stored plan. Never touches Scribe, so a re-render is CPU only.
+
+    With `segment=(t0, t1)` only that slice of the source is rendered, on a
+    timeline shifted to start at zero: the preview the editor plays after a
+    correction goes through the exact same filter path as the full render, so it
+    cannot drift from what the final video will show.
 
     A caller that needs the id before the work starts (an HTTP handler wanting
     to hand the client something to poll) can create the row itself and pass it
@@ -135,8 +141,8 @@ def render(project_id: str, settings: dict | None = None, progress_cb=None,
 
     out_dir = db.MEDIA_DIR / project_id
     out_dir.mkdir(parents=True, exist_ok=True)
-    output_path = out_dir / f"{render_id}.mp4"
-    ass_path = out_dir / f"{render_id}.ass"
+    output_path = out_dir / f"{render_id}{'_seg' if segment else ''}.mp4"
+    ass_path = out_dir / f"{render_id}{'_seg' if segment else ''}.ass"
 
     cpu_start = _cpu_seconds()
     try:
@@ -144,28 +150,42 @@ def render(project_id: str, settings: dict | None = None, progress_cb=None,
 
         stage("subtitles")
         burn_ass = None
+
+        words = plan["words"]
+        hook = plan.get("hook")
+        t0 = 0.0
+        if segment:
+            t0, t1 = segment
+            words = [w for w in words if w["end"] > t0 and w["start"] < t1]
+            words = [{**w, "start": round(w["start"] - t0, 3),
+                      "end": round(w["end"] - t0, 3)} for w in words]
+            hook = ({**hook, "start": 0.0, "end": min(hook["end"], t1) - t0}
+                    if hook and hook["start"] < t1 else None)
+
         if settings["captions"]:
             style = _apply_style_settings(
                 load_style(str(STYLES_DIR / f"{settings['style']}.yaml")), settings
             )
-            hook = plan.get("hook")
             if hook and settings["hook"]:
                 hook = {**hook, "end": hook.get("start", 0.0) + settings["hook_duration"]}
             else:
                 hook = None
-            build_ass(plan["words"], style, project["width"], project["height"],
+            build_ass(words, style, project["width"], project["height"],
                       hook=hook).save(str(ass_path))
             burn_ass = str(ass_path)
 
         # Zoom and sfx placement is a pure function of the words plus a few
         # numbers, so it is recomputed here from the current settings rather
         # than read from the plan. Changing the spacing costs nothing.
+        # Placement is computed from the same (possibly shifted) word list, so a
+        # segment preview shows zooms and effects exactly as the full render
+        # would place them around that moment.
         zooms = sfx = None
         if settings["zoom"]:
-            zooms = plan_zooms(plan["words"], [], spacing=settings["zoom_spacing"],
+            zooms = plan_zooms(words, [], spacing=settings["zoom_spacing"],
                                duration=settings["zoom_duration"], scale=settings["zoom_scale"])
         if settings["sfx"]:
-            sfx = plan_sfx(plan["words"], min_spacing=settings["sfx_spacing"])
+            sfx = plan_sfx(words, min_spacing=settings["sfx_spacing"])
 
         stage("render")
 
@@ -194,6 +214,8 @@ def render(project_id: str, settings: dict | None = None, progress_cb=None,
             progress_cb=report,
             zooms=zooms,
             sfx=sfx,
+            seek_start=t0 if segment else None,
+            seek_duration=round(t1 - t0, 3) if segment else None,
             lut_strength=settings["lut_strength"],
             denoise=settings["denoise"],
             vignette=settings["vignette"],

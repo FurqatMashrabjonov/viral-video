@@ -4,8 +4,9 @@ import { Clapperboard, RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { Separator } from "@/components/ui/separator"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Toaster } from "@/components/ui/sonner"
+import { EditorTab } from "@/components/EditorTab"
 import { PipelineView } from "@/components/PipelineView"
 import { ProjectList } from "@/components/ProjectList"
 import { RenderResult } from "@/components/RenderResult"
@@ -19,6 +20,7 @@ export default function App() {
   const [projects, setProjects] = useState<Project[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [detail, setDetail] = useState<ProjectDetail | null>(null)
+  const [settings, setSettings] = useState<Record<string, boolean | number | string>>({})
 
   const terminal = schema?.terminal_stages ?? []
   const { events, done } = useStream(selectedId, terminal)
@@ -34,7 +36,10 @@ export default function App() {
   }, [selectedId, refreshProjects])
 
   useEffect(() => {
-    void api.schema().then(setSchema)
+    void api.schema().then((s) => {
+      setSchema(s)
+      setSettings(s.defaults)
+    })
     void refreshProjects()
   }, [refreshProjects])
 
@@ -111,6 +116,8 @@ export default function App() {
                     <SettingsPanel
                       schema={schema}
                       projectId={selectedId}
+                      values={settings}
+                      onChange={setSettings}
                       onRender={() => void refreshDetail()}
                     />
                   </TabsContent>
@@ -125,33 +132,15 @@ export default function App() {
 
                   <TabsContent value="transkript" className="pt-4">
                     {detail?.plan && (
-                      <div className="space-y-3">
-                        {detail.plan.hook && (
-                          <p className="text-sm">
-                            <span className="text-muted-foreground">Hook: </span>
-                            <span className="font-medium">{detail.plan.hook.text}</span>
-                          </p>
-                        )}
-                        <Separator />
-                        <p className="text-sm leading-relaxed">
-                          {detail.plan.words.map((w, i) => (
-                            <span
-                              key={i}
-                              className={
-                                w.keyword
-                                  ? "rounded bg-emerald-500/15 px-1 font-medium text-emerald-700 dark:text-emerald-300"
-                                  : undefined
-                              }
-                            >
-                              {w.word}{" "}
-                            </span>
-                          ))}
-                        </p>
-                        <p className="text-xs text-muted-foreground tabular-nums">
-                          {detail.plan.words.length} so'z ·{" "}
-                          {detail.plan.words.filter((w) => w.keyword).length} kalit so'z
-                        </p>
-                      </div>
+                      <EditorTab
+                        key={selectedId}
+                        projectId={selectedId}
+                        plan={detail.plan}
+                        settings={settings}
+                        onSaved={(plan) =>
+                          setDetail((d) => (d ? { ...d, plan } : d))
+                        }
+                      />
                     )}
                   </TabsContent>
                 </Tabs>
@@ -160,6 +149,7 @@ export default function App() {
           )}
         </section>
       </main>
+      <Toaster richColors />
     </div>
   )
 }

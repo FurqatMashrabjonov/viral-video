@@ -198,7 +198,8 @@ def enhance(input_path: str, output_path: str, lut_path: str = DEFAULT_LUT, ass_
             progress_cb=None, zooms: list[dict] | None = None, sfx: list[dict] | None = None,
             lut_strength: float = LUT_OPACITY, denoise: bool = True, vignette: bool = True,
             grade: bool = True, sfx_volume: float = SFX_VOLUME, target_lufs: float = -16.0,
-            audio_cleanup: bool = True):
+            audio_cleanup: bool = True, seek_start: float | None = None,
+            seek_duration: float | None = None):
     mean_luma = measure_mean_luma(input_path)
     eq = adaptive_eq_params(mean_luma)
 
@@ -228,14 +229,22 @@ def enhance(input_path: str, output_path: str, lut_path: str = DEFAULT_LUT, ass_
         + build_audio_filter(usable, sfx_inputs, volume=sfx_volume,
                              target_lufs=target_lufs, cleanup=audio_cleanup)
     )
+    # Segment previews seek into the source. The seek goes before -i so ffmpeg
+    # fast-seeks to a keyframe and decodes forward, rather than decoding the
+    # whole clip and throwing frames away.
+    seek_args = []
+    if seek_start is not None:
+        seek_args = ["-ss", f"{seek_start:.3f}"]
+    if seek_duration is not None:
+        seek_args += ["-t", f"{seek_duration:.3f}"]
     cmd = [
-        "ffmpeg", "-y", "-i", input_path, *sfx_args,
+        "ffmpeg", "-y", *seek_args, "-i", input_path, *sfx_args,
         "-filter_complex", filter_complex,
         "-map", "[vout]", "-map", "[aout]",
         "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac",
         output_path,
     ]
-    total_duration = get_duration(input_path) if progress_cb else None
+    total_duration = seek_duration or (get_duration(input_path) if progress_cb else None)
     _run_ffmpeg(cmd, total_duration=total_duration, progress_cb=progress_cb)
     print(f"[enhance] wrote {output_path}")
 

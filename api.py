@@ -111,20 +111,36 @@ async def api_save_plan(project_id: str, plan: dict = Body(...)):
 # --- renders ----------------------------------------------------------------
 
 @app.post("/api/projects/{project_id}/render")
-async def api_render(project_id: str, settings: dict = Body(default={})):
+async def api_render(project_id: str, body: dict = Body(default={})):
+    """Render the stored plan. Body is either the settings directly (as the
+    first clients posted) or {"settings": {...}, "segment": [t0, t1]} for a
+    preview slice."""
     if not db.get_project(project_id):
         raise HTTPException(404, "project not found")
     if not db.get_plan(project_id):
         raise HTTPException(409, "project has no plan yet")
 
+    settings = body.get("settings", body)
     merged = merge_settings(settings)
+
+    segment = None
+    raw_segment = body.get("segment")
+    if raw_segment:
+        try:
+            t0, t1 = float(raw_segment[0]), float(raw_segment[1])
+            if t0 < 0 or t1 <= t0:
+                raise ValueError
+            segment = (t0, t1)
+        except (TypeError, ValueError, IndexError):
+            raise HTTPException(422, "segment must be [t0, t1] with 0 <= t0 < t1")
+
     # Create the row up front so the client gets an id it can poll immediately,
     # rather than after the render finishes.
     render_id = db.create_render(project_id, merged)
 
     def work():
         try:
-            render(project_id, merged, render_id=render_id)
+            render(project_id, merged, render_id=render_id, segment=segment)
         except Exception:
             pass  # render() already journalled the error and marked the row
 

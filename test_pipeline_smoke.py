@@ -99,6 +99,26 @@ def test_editing_the_plan_changes_the_next_render():
     assert "Assalom" in ass and "Salom{" not in ass
 
 
+def test_segment_render_crops_and_shifts():
+    """The editor preview: a slice of the source through the exact same filter
+    path, on a timeline that starts at zero."""
+    with patch("pipeline.transcribe", return_value=MOCK_WORDS):
+        project_id = ingest(str(_clip()), enrich=False)
+
+    render_id = render(project_id, {"zoom": False, "sfx": False}, segment=(0.8, 2.2))
+    row = db.get_render(render_id)
+    assert row["status"] == "done"
+    assert row["output_path"].endswith("_seg.mp4")
+
+    from enhance import get_duration
+    assert abs(get_duration(row["output_path"]) - 1.4) < 0.25
+
+    ass = Path(row["ass_path"]).read_text(encoding="utf-8")
+    # the word at 0.6-1.2 shifts to start at zero; the one before the slice is gone
+    assert "oʻzbekcha" in ass
+    assert "Salom" not in ass
+
+
 if __name__ == "__main__":
     import sys
     failed = 0

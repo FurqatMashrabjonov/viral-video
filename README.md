@@ -140,8 +140,21 @@ narxlariga moslashtiring.
 - `demo_milestone3.py` — sintetik qorong'i/shovqinli klip -> enhance -> compare
 - `demo_milestone4.py` — FastAPI to'liq oqim, Scribe mock qilingan
 
-## Nima qurilmagan (backlog, keyingi bosqichlar)
+## Nima qurilmagan (backlog)
 
-To'lov (Payme/Click), GPT-4o fallback, face tracking/auto-zoom, GPU asosli
-studio yoritish, B-roll, sound effects — asl reja bo'yicha ataylab
-qurilmagan.
+**Ataylab chiqarilgan:**
+
+- **Face tracking / auto-reframe** — kirish allaqachon kadrlangan 9:16, yuz
+  markazda. Face tracking 16:9 ni 9:16 ga qayta kadrlash uchun mavjud; bizda
+  yo'q muammoni hal qilgan bo'lardi. Markazga tortilgan punch-in zoom o'rnini
+  bosadi.
+- **GPU yoritish / matting** (BiRefNet, RVM) — GPU worker tier talab qiladi va
+  qisqa video trendi haddan pardozlangan ko'rinishdan uzoqlashmoqda.
+- **Uzun videodan shorts kesish**, **AI avatar / ovoz klonlash** — boshqa
+  mahsulot.
+- **Jimlik va filler so'z kesish** — `analyze.py` kesimlarni hisoblay oladi
+  (`cut_silence=True`) va vaqt remap testlar bilan qoplangan, lekin render
+  ularni qo'llamaydi va pipeline'da o'chiq.
+
+**Hali qurilmagan:** to'lov (Payme/Click), GPT-4o fallback, B-roll (Pexels),
+emoji avtomatik qo'yish.

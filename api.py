@@ -8,12 +8,14 @@ the plan, and never goes back to Scribe.
 # survives a restart; swap ThreadPoolExecutor for Celery/RQ when renders need to
 # run across more than one machine. Media stays on disk (S3/R2 later).
 """
+import asyncio
+import json
 import shutil
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Body
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Body, Request
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 
 import db
 from pipeline import run_pipeline, ingest, render, DEFAULT_SETTINGS
@@ -25,7 +27,10 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 app = FastAPI()
 executor = ThreadPoolExecutor(max_workers=1)
 jobs: dict[str, dict] = {}          # legacy single-shot jobs
-stages: dict[str, str] = {}         # project_id / render_id -> current stage
+
+POLL_INTERVAL = 0.4     # seconds between checks for new journal rows
+HEARTBEAT_EVERY = 15.0  # comment frame so idle proxies keep the stream open
+STREAM_TIMEOUT = 300.0  # give up on a stream that has been silent this long
 
 # Schema at import, not on a startup event: TestClient only fires startup when
 # used as a context manager, and a handler that assumes the tables exist should
@@ -60,10 +65,9 @@ async def api_create_project(file: UploadFile = File(...)):
 
     def work():
         try:
-            ingest(str(stored), project_id=project_id,
-                   stage_cb=lambda s: stages.update({project_id: s}))
-        except Exception as e:
-            stages[project_id] = f"error: {e}"
+            ingest(str(stored), project_id=project_id)
+        except Exception:
+            pass  # ingest() already journalled the error and marked the project
 
     executor.submit(work)
     return {"project_id": project_id, "status": "ingesting"}
@@ -102,10 +106,9 @@ async def api_render(project_id: str, settings: dict = Body(default={})):
 
     def work():
         try:
-            render(project_id, merged, render_id=render_id,
-                   stage_cb=lambda s: stages.update({render_id: s}))
-        except Exception as e:
-            stages[render_id] = f"error: {e}"
+            render(project_id, merged, render_id=render_id)
+        except Exception:
+            pass  # render() already journalled the error and marked the row
 
     executor.submit(work)
     return {"render_id": render_id, "project_id": project_id, "settings": merged, "status": "queued"}
@@ -127,6 +130,65 @@ async def api_render_video(render_id: str):
     if row["status"] != "done":
         raise HTTPException(409, f"render status is {row['status']}")
     return FileResponse(row["output_path"], media_type="video/mp4")
+
+
+@app.get("/api/projects/{project_id}/events")
+async def api_events(project_id: str, after: int = 0):
+    """Everything journalled so far. Useful on its own, and it is what the
+    stream replays on reconnect."""
+    if not db.get_project(project_id):
+        raise HTTPException(404, "project not found")
+    return db.list_events(project_id, after_id=after)
+
+
+@app.get("/api/projects/{project_id}/stream")
+async def api_stream(project_id: str, request: Request, after: int = 0):
+    """Server-Sent Events: progress only ever flows server to client, so a
+    WebSocket would add a return channel nothing uses.
+
+    Each frame carries its row id, and a browser reconnecting sends it back in
+    Last-Event-ID, so the replay picks up exactly where it stopped instead of
+    leaving a hole.
+    """
+    if not db.get_project(project_id):
+        raise HTTPException(404, "project not found")
+
+    resume = request.headers.get("last-event-id")
+    start = int(resume) if resume and resume.isdigit() else after
+
+    async def frames():
+        # Two clocks, not one: the heartbeat resets on every beat, so reusing it
+        # to age out the stream would mean the timeout never arrives.
+        last_id, idle, since_beat = start, 0.0, 0.0
+        while True:
+            if await request.is_disconnected():
+                return
+
+            events = db.list_events(project_id, after_id=last_id)
+            for e in events:
+                last_id = e["id"]
+                yield f"id: {e['id']}\nevent: stage\ndata: {json.dumps(e)}\n\n"
+                if e["stage"] in db.TERMINAL_STAGES:
+                    return
+
+            if events:
+                idle = since_beat = 0.0
+            else:
+                idle += POLL_INTERVAL
+                since_beat += POLL_INTERVAL
+
+            if idle > STREAM_TIMEOUT:
+                return
+            if since_beat >= HEARTBEAT_EVERY:
+                since_beat = 0.0
+                yield ": keep-alive\n\n"   # stops idle proxies closing the stream
+            await asyncio.sleep(POLL_INTERVAL)
+
+    return StreamingResponse(
+        frames(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.get("/api/schema")

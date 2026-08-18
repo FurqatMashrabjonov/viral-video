@@ -52,7 +52,30 @@ CREATE TABLE IF NOT EXISTS renders (
 );
 
 CREATE INDEX IF NOT EXISTS renders_by_project ON renders(project_id, created_at DESC);
+
+-- Progress is journalled rather than kept in memory so a browser that
+-- reconnects mid-render can replay what it missed instead of seeing a gap.
+CREATE TABLE IF NOT EXISTS events (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    render_id  TEXT,
+    stage      TEXT NOT NULL,
+    progress   REAL,
+    message    TEXT,
+    ts         REAL NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS events_by_project ON events(project_id, id);
 """
+
+# Stages a client can expect, in order. The slow ones are worth a percentage;
+# the rest are over in well under a second.
+STAGES = ["probe", "audio", "transcribe", "plan", "enrich", "ready",
+          "subtitles", "render", "done"]
+
+# Stages that end a stream. "ready" is not one of them: it closes ingest, but a
+# render follows on the same project and the client wants to keep watching.
+TERMINAL_STAGES = {"done", "error"}
 
 
 def connect() -> sqlite3.Connection:
@@ -181,3 +204,25 @@ def list_renders(project_id: str, limit: int = 20) -> list[dict]:
         d["settings"] = json.loads(d["settings"])
         out.append(d)
     return out
+
+
+# --- events -----------------------------------------------------------------
+
+def add_event(project_id: str, stage: str, progress: float | None = None,
+              message: str | None = None, render_id: str | None = None) -> int:
+    with connect() as conn:
+        cur = conn.execute(
+            "INSERT INTO events (project_id, render_id, stage, progress, message, ts)"
+            " VALUES (?,?,?,?,?,?)",
+            (project_id, render_id, stage, progress, message, time.time()),
+        )
+    return cur.lastrowid
+
+
+def list_events(project_id: str, after_id: int = 0, limit: int = 500) -> list[dict]:
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM events WHERE project_id=? AND id>? ORDER BY id LIMIT ?",
+            (project_id, after_id, limit),
+        ).fetchall()
+    return [dict(r) for r in rows]

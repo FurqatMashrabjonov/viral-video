@@ -61,6 +61,8 @@ Endpointlar:
 | GET | `/api/renders/{id}` | holat, progress, sozlamalar |
 | GET | `/api/renders/{id}/video` | tayyor video (mp4) |
 | GET | `/api/schema` | sozlamalar sxemasi + standartlar |
+| GET | `/api/projects/{id}/stream` | SSE: jonli bosqich va progress |
+| GET | `/api/projects/{id}/events` | jurnaldagi barcha hodisalar |
 
 Eski bir martalik oqim ham ishlaydi (`/process`, `/status/{id}`,
 `/result/{id}`) — mavjud test UI shundan foydalanadi.
@@ -115,6 +117,30 @@ soni hali ham 1 bo'lishi kerak.
 
 Xarajat logi ikkalasini alohida yozadi — `INGEST` qatorida Scribe narxi,
 `RENDER` qatorida faqat CPU.
+
+## Jonli progress (SSE)
+
+Bosqichlar `events` jadvaliga yoziladi, xotiraga emas — brauzer render o'rtasida
+uzilib qayta ulansa, o'tkazib yuborganini qayta o'qiy oladi.
+
+```
+GET /api/projects/{id}/stream    # text/event-stream
+GET /api/projects/{id}/events    # o'sha jurnal, oddiy JSON
+```
+
+Har freym o'z qator `id` sini olib yuradi. Brauzer qayta ulanganda uni
+`Last-Event-ID` sarlavhasida qaytaradi va oqim aynan o'sha joydan davom etadi —
+teshik qolmaydi.
+
+**Nega SSE, WebSocket emas:** progress faqat serverdan klientga oqadi.
+WebSocket hech kim ishlatmaydigan qaytish kanalini qo'shadi.
+
+Bosqichlar: `probe → audio → transcribe → plan → enrich → ready →
+subtitles → render → done`. `ready` oqimni yopmaydi — u ingest'ni tugatadi,
+lekin keyin render keladi va klient hali kuzatib turibdi.
+
+ffmpeg progressi soniyasiga bir necha marta keladi; jurnalga har 5% da bitta
+qator yoziladi, aks holda bosqich qatorlari ko'milib ketardi.
 
 ## Sozlamalar (`settings.py`)
 
@@ -180,6 +206,7 @@ qolganiga `pop`, kamida 1.5 soniya oraliq bilan. Miks darajasi
 .venv/bin/python test_subtitles.py        # kalit so'z teglari, hook
 .venv/bin/python test_enhance.py          # zoom ifodasi, sfx audio grafi
 .venv/bin/python test_settings.py         # sxema butunligi, qiymat validatsiyasi
+.venv/bin/python test_events.py           # hodisa jurnali, SSE qayta ulanish
 .venv/bin/python test_pipeline_smoke.py   # 5s sintetik klip, Scribe mock qilingan
 ```
 

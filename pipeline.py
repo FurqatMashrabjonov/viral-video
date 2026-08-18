@@ -65,13 +65,14 @@ def ingest(source_path: str, name: str | None = None, language_code: str = "uzb"
     An upload handler that must answer the request before the work finishes can
     create the row itself and pass the id in.
     """
-    def stage(s):
-        if stage_cb:
-            stage_cb(s)
-
     db.init()
     if project_id is None:
         project_id = db.create_project(name or Path(source_path).stem, source_path)
+
+    def stage(s, message=None):
+        db.add_event(project_id, s, message=message)
+        if stage_cb:
+            stage_cb(s)
 
     try:
         stage("probe")
@@ -97,6 +98,7 @@ def ingest(source_path: str, name: str | None = None, language_code: str = "uzb"
         db.set_project_status(project_id, "ready")
     except Exception as e:
         db.set_project_status(project_id, "error", str(e))
+        stage("error", message=str(e))
         raise
 
     log_cost(project_id, duration / 60, round(duration / 60 * COST_PER_MINUTE_USD, 4), 0.0)
@@ -114,10 +116,6 @@ def render(project_id: str, settings: dict | None = None, progress_cb=None,
     to hand the client something to poll) can create the row itself and pass it
     in.
     """
-    def stage(s):
-        if stage_cb:
-            stage_cb(s)
-
     db.init()
     project = db.get_project(project_id)
     if not project:
@@ -129,6 +127,12 @@ def render(project_id: str, settings: dict | None = None, progress_cb=None,
     settings = merge_settings(settings)
     if render_id is None:
         render_id = db.create_render(project_id, settings)
+
+    def stage(s, progress=None, message=None):
+        db.add_event(project_id, s, progress=progress, message=message, render_id=render_id)
+        if stage_cb:
+            stage_cb(s)
+
     out_dir = db.MEDIA_DIR / project_id
     out_dir.mkdir(parents=True, exist_ok=True)
     output_path = out_dir / f"{render_id}.mp4"
@@ -165,10 +169,21 @@ def render(project_id: str, settings: dict | None = None, progress_cb=None,
 
         stage("render")
 
+        last_notch = -1
+
         def report(fraction: float):
             # The render owns its own row, so progress lands in the database
             # whether or not the caller passed a callback.
+            nonlocal last_notch
             db.update_render(render_id, progress=round(fraction, 4))
+            # ffmpeg reports several times a second; journalling every one of
+            # those would bury the stage events. One row per 5% is enough to
+            # drive a progress bar.
+            notch = int(fraction * 20)
+            if notch > last_notch:
+                last_notch = notch
+                db.add_event(project_id, "render", progress=round(fraction, 4),
+                             render_id=render_id)
             if progress_cb:
                 progress_cb(fraction)
 
@@ -193,6 +208,7 @@ def render(project_id: str, settings: dict | None = None, progress_cb=None,
         )
     except Exception as e:
         db.update_render(render_id, status="error", error=str(e))
+        stage("error", message=str(e))
         raise
 
     # Scribe minutes are zero here on purpose: this phase re-uses the stored

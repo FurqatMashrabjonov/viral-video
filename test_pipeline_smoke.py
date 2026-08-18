@@ -32,8 +32,9 @@ def test_pipeline_smoke():
     clip.parent.mkdir(exist_ok=True)
     make_smoke_clip(clip)
 
+    # enrich=False keeps the Gemini call out of CI, same reason Scribe is mocked
     with patch("pipeline.transcribe", return_value=MOCK_WORDS):
-        metadata = run_pipeline(str(clip), style_name="warm_karaoke")
+        metadata = run_pipeline(str(clip), style_name="warm_karaoke", enrich=False)
 
     assert Path(metadata["output_path"]).exists(), "output video missing"
     assert Path(metadata["output_path"]).stat().st_size > 0, "output video is empty"

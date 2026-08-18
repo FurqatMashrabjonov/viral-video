@@ -12,3 +12,9 @@ margin_v: 220
 margin_h: 60
 max_words_per_line: 4
 max_chars_per_line: 24
+
+# kalit so'z: faqat rang (kontur saqlanadi, yorqin videoda o'qiladi)
+keyword_color: [90, 226, 130]
+hook_color: [255, 255, 255]
+hook_outline_width: 5
+hook_margin_v: 240

@@ -11,3 +11,15 @@ margin_v: 260
 margin_h: 50
 pop_duration_ms: 120
 pop_scale_from: 130
+
+# kalit so'z: yashil quti (Submagic ko'rinishi). BorderStyle=3 konturni
+# almashtiradi, shuning uchun oddiy so'zlar ham quti oladi -- aks holda
+# yorqin fonda o'qilmaydi.
+keyword_box: true
+keyword_box_color: [30, 158, 30]
+keyword_color: [255, 255, 255]
+box_color: [0, 0, 0]
+box_alpha: 96
+box_pad: 10
+hook_color: [255, 214, 0]
+hook_margin_v: 200

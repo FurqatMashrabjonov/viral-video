@@ -8,6 +8,7 @@ from scribe import transcribe, COST_PER_MINUTE_USD
 from normalize import normalize_words
 from subtitles import build_ass, load_style
 from enhance import enhance, get_video_dims, get_duration
+from analyze import build_edit_plan, llm_enrich, save_plan
 from cost import log_cost
 
 STYLES_DIR = Path("styles")
@@ -29,7 +30,7 @@ def _cpu_seconds() -> float:
 
 
 def run_pipeline(input_path: str, style_name: str = "warm_karaoke", language_code: str = "uzb",
-                  lut_path: str | None = None, progress_cb=None) -> dict:
+                  lut_path: str | None = None, progress_cb=None, enrich: bool = True) -> dict:
     OUTPUT_DIR.mkdir(exist_ok=True)
     job_stem = Path(input_path).stem
     output_path = OUTPUT_DIR / f"{job_stem}_out.mp4"
@@ -42,9 +43,14 @@ def run_pipeline(input_path: str, style_name: str = "warm_karaoke", language_cod
 
         words = normalize_words(transcribe(audio_path, language_code=language_code))
 
+        plan = build_edit_plan(words, get_duration(input_path), cut_silence=False)
+        if enrich:
+            plan = llm_enrich(plan)
+        save_plan(plan, str(OUTPUT_DIR / f"{job_stem}_plan.json"))
+
         width, height = get_video_dims(input_path)
         style = load_style(str(STYLES_DIR / f"{style_name}.yaml"))
-        subs = build_ass(words, style, width, height)
+        subs = build_ass(plan["words"], style, width, height, hook=plan["hook"])
         subs.save(str(ass_path))
 
         enhance(
@@ -64,6 +70,7 @@ def run_pipeline(input_path: str, style_name: str = "warm_karaoke", language_cod
         "output_path": str(output_path),
         "ass_path": str(ass_path),
         "duration_sec": round(duration, 2),
-        "word_count": len(words),
+        "word_count": len(plan["words"]),
+        "hook": plan["hook"]["text"] if plan["hook"] else None,
         "cost": cost_entry,
     }

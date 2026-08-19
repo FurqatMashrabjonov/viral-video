@@ -15,7 +15,7 @@ from pathlib import Path
 MIN_SILENCE_GAP = 0.35      # gaps longer than this get cut
 KEEP_PAD = 0.05             # leave a sliver of silence so speech isn't clipped
 MIN_ZOOM_SPACING = 3.0      # research: a visual change every 3-5s
-ZOOM_DURATION = 1.2       # render ramps ~0.22s in and out, so leave room to hold
+MIN_ZOOM_DURATION = 0.6     # floor so a short phrase still clears the ~0.22s ramp in/out
 ZOOM_SCALE = 1.15
 HOOK_END = 3.0
 LOW_CONFIDENCE_LOGPROB = -1.0  # below this, Scribe was guessing -- flag for review
@@ -82,26 +82,29 @@ def mark_low_confidence(words: list[dict], threshold: float = LOW_CONFIDENCE_LOG
     return out
 
 
-def plan_zooms(words: list[dict], cuts_on_new_timeline: list[float],
-               spacing: float = MIN_ZOOM_SPACING, duration: float = ZOOM_DURATION,
-               scale: float = ZOOM_SCALE) -> list[dict]:
-    """Punch in on keywords and just after each cut, spaced so it doesn't pulse.
+def zooms_from_spans(spans: list[dict], spacing: float = MIN_ZOOM_SPACING,
+                     min_duration: float = MIN_ZOOM_DURATION, scale: float = ZOOM_SCALE) -> list[dict]:
+    """Punch in on emphasised phrases, not keywords.
 
-    Pure function of the words plus these three numbers, which is what lets the
+    A keyword marks one word for a subtitle highlight; a zoom is a camera move
+    for a whole sentence that matters. Conflating the two meant a ten-keyword
+    line camera-punched ten times in ten seconds. Spans come from the LLM
+    (llm_enrich's emphasis_spans, already resolved to seconds) -- each covers a
+    real phrase, so the zoom holds for the phrase's own length rather than a
+    fixed duration.
+
+    Pure function of the spans plus these three numbers, which is what lets the
     renderer recompute zoom placement from changed settings without going back
     to Scribe.
     """
-    candidates = [w["start"] for w in words if w.get("keyword")] + cuts_on_new_timeline
-    zooms, last = [], -spacing
-    for t in sorted(candidates):
-        if t - last < spacing:
+    zooms, last_end = [], float("-inf")
+    for span in sorted(spans, key=lambda s: s["start"]):
+        start = span["start"]
+        if start - last_end < spacing:
             continue
-        zooms.append({
-            "start": round(t, 3),
-            "end": round(t + duration, 3),
-            "scale": scale,
-        })
-        last = t
+        end = max(span["end"], start + min_duration)
+        zooms.append({"start": round(start, 3), "end": round(end, 3), "scale": scale})
+        last_end = end
     return zooms
 
 
@@ -125,14 +128,14 @@ def plan_sfx(words: list[dict], min_spacing: float = SFX_MIN_SPACING) -> list[di
 def build_edit_plan(words: list[dict], source_duration: float, cut_silence: bool = True) -> dict:
     cuts = find_silences(words) if cut_silence else []
     new_words = mark_low_confidence(mark_keywords(remap_words(words, cuts)))
-    cut_marks = [remap_time(c["start"], cuts) for c in cuts]
 
     return {
         "source_duration": round(source_duration, 3),
         "output_duration": round(source_duration - sum(c["end"] - c["start"] for c in cuts), 3),
         "cuts": cuts,
         "words": new_words,
-        "zooms": plan_zooms(new_words, cut_marks),
+        "emphasis_spans": [],  # filled by llm_enrich() -- heuristics can't judge what a sentence means
+        "zooms": [],
         "sfx": plan_sfx(new_words),
         "hook": None,  # filled by llm_enrich()
     }
@@ -140,7 +143,8 @@ def build_edit_plan(words: list[dict], source_duration: float, cut_silence: bool
 
 SYSTEM_PROMPT = """Sen o'zbek tilidagi qisqa vertikal videolar uchun subtitr muharrirsan.
 
-Senga video transkripti beriladi. Ikki narsa qaytar:
+Senga video transkripti so'z raqamlari bilan beriladi: "0:Bugun 1:reklama 2:byudjetini ...".
+Uchta narsa qaytar:
 
 1. hook — videoning birinchi 3 soniyasida ekranda turadigan sarlavha.
    - o'zbek tilida, transkript mazmuniga asoslangan
@@ -148,14 +152,23 @@ Senga video transkripti beriladi. Ikki narsa qaytar:
    - tomoshabinni to'xtatadigan: savol, dadil da'vo yoki aniq raqam
    - clickbait emas, transkriptda yo'q narsani va'da qilma
 
-2. keywords — transkriptdagi urg'u berilishi kerak bo'lgan so'zlar, har biriga bitta emoji bilan.
-   - word: faqat transkriptda AYNAN uchraydigan so'zni qaytar, o'zgartirmasdan
+2. keywords — transkriptdagi urg'u berilishi kerak bo'lgan SO'ZLAR (subtitrda rang bilan
+   ajratish uchun), har biriga bitta emoji bilan.
+   - word: faqat transkriptda AYNAN uchraydigan so'zni qaytar, raqamsiz, o'zgartirmasdan
    - emoji: shu so'z mazmuniga mos BITTA emoji — teri rangi modifikatori yoki
      ZWJ ketma-ketligi (bir nechta emoji birlashgan turi) ishlatma, faqat oddiy
      yakka belgi (masalan 🚗, 💰, ⚠️, 📈)
    - atamalar, ismlar, muhim tushunchalar, natijani bildiruvchi so'zlar
    - har 8-10 so'zga taxminan bittadan, hammasini belgilama
-   - "va", "bu", "shu" kabi yordamchi so'zlarga emoji bermang"""
+   - "va", "bu", "shu" kabi yordamchi so'zlarga emoji bermang
+
+3. emphasis_spans — videoning eng muhim GAPLARI, kamera yaqinlashishi (zoom) uchun.
+   - BUTUNLAY ALOHIDA tushuncha keywords'dan: keywords bitta so'zni subtitrda
+     ranglaydi, emphasis_spans esa butun gapni kamera bilan urg'ulaydi
+   - start_index / end_index — transkriptdagi so'z raqamlari (ikkalasi ham kiritiladi)
+   - HAR BIR span kamida 2 ta so'zdan iborat bo'lsin — bitta so'z hech qachon emas
+   - butun video uchun 2 tadan 4 tagacha, ko'proq emas — faqat haqiqatan asosiy
+     xulosa, natija yoki da'vo bo'lgan gaplarni tanla, har jumlaga emas"""
 
 _ENRICH_SCHEMA = {
     "type": "object",
@@ -172,8 +185,19 @@ _ENRICH_SCHEMA = {
                 "required": ["word", "emoji"],
             },
         },
+        "emphasis_spans": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "start_index": {"type": "integer"},
+                    "end_index": {"type": "integer"},
+                },
+                "required": ["start_index", "end_index"],
+            },
+        },
     },
-    "required": ["hook", "keywords"],
+    "required": ["hook", "keywords", "emphasis_spans"],
 }
 
 
@@ -186,6 +210,28 @@ def _looks_like_one_emoji(s: str) -> bool:
     means the model answered in words, and long strings are more likely a ZWJ
     sequence than the plain glyph the prompt asked for."""
     return bool(s) and len(s) <= 3 and not any(c.isascii() and c.isalpha() for c in s)
+
+
+def _resolve_span_times(words: list[dict], start_index, end_index) -> dict | None:
+    """A model-given word-index pair -> real start/end seconds.
+
+    Indices are clamped into range and sorted rather than trusted, since a
+    model response is an input from outside the program, not a guarantee.
+    None if the span doesn't survive that -- out of range entirely, or
+    collapsing to a single word once clamped, which the prompt already asked
+    the model not to send but a strict schema doesn't stop it from doing.
+    """
+    n = len(words)
+    if n == 0:
+        return None
+    try:
+        i, j = sorted((int(start_index), int(end_index)))
+    except (TypeError, ValueError):
+        return None
+    i, j = max(0, min(i, n - 1)), max(0, min(j, n - 1))
+    if j <= i:
+        return None
+    return {"start": words[i]["start"], "end": words[j]["end"]}
 
 
 def llm_enrich(plan: dict, model: str = "gemini-3.5-flash", max_retries: int = 3) -> dict:
@@ -204,7 +250,9 @@ def llm_enrich(plan: dict, model: str = "gemini-3.5-flash", max_retries: int = 3
     if not os.environ.get("GEMINI_API_KEY"):
         raise RuntimeError("GEMINI_API_KEY not set")
 
-    transcript = " ".join(w["word"] for w in plan["words"])
+    # Indexed so the model can name a phrase by word position instead of
+    # reproducing text -- exact, and immune to a word appearing twice.
+    transcript = " ".join(f"{i}:{w['word']}" for i, w in enumerate(plan["words"]))
 
     client = genai.Client()  # keep a reference; a temporary gets closed mid-call
     config = types.GenerateContentConfig(
@@ -247,12 +295,19 @@ def llm_enrich(plan: dict, model: str = "gemini-3.5-flash", max_retries: int = 3
             if wanted[key]:
                 w["emoji"] = wanted[key]
 
-    cut_marks = [remap_time(c["start"], plan["cuts"]) for c in plan["cuts"]]
-    plan["zooms"] = plan_zooms(plan["words"], cut_marks)
+    spans = []
+    for item in result.get("emphasis_spans", []):
+        resolved = _resolve_span_times(plan["words"], item.get("start_index"), item.get("end_index"))
+        if resolved:
+            spans.append(resolved)
+    plan["emphasis_spans"] = spans
+    plan["zooms"] = zooms_from_spans(spans)
     plan["sfx"] = plan_sfx(plan["words"])
+
     n_emoji = sum(1 for w in plan["words"] if w.get("emoji"))
     print(f"[analyze] hook: {plan['hook']['text']!r}, "
-          f"{sum(w['keyword'] for w in plan['words'])} keywords, {n_emoji} emoji")
+          f"{sum(w['keyword'] for w in plan['words'])} keywords, {n_emoji} emoji, "
+          f"{len(spans)} emphasis spans")
     return plan
 
 

@@ -8,9 +8,10 @@ from analyze import (
     remap_words,
     mark_keywords,
     mark_low_confidence,
-    plan_zooms,
+    zooms_from_spans,
     build_edit_plan,
     _looks_like_one_emoji,
+    _resolve_span_times,
 )
 
 # 2.0s of dead air between "bor" and "keyin"
@@ -85,10 +86,57 @@ def test_numbers_are_keywords_plain_words_are_not():
 
 
 def test_zooms_respect_minimum_spacing():
-    words = [{"word": str(i), "start": i * 0.5, "end": i * 0.5 + 0.3, "keyword": True} for i in range(12)]
-    zooms = plan_zooms(words, [])
+    spans = [{"start": i * 1.0, "end": i * 1.0 + 0.8} for i in range(12)]
+    zooms = zooms_from_spans(spans, spacing=3.0)
     for prev, nxt in zip(zooms, zooms[1:]):
-        assert nxt["start"] - prev["start"] >= 3.0, "zoom would pulse"
+        assert nxt["start"] - prev["end"] >= 3.0, "zoom would pulse"
+
+
+def test_zoom_duration_matches_the_span_not_a_fixed_length():
+    """The whole point of moving zoom off keywords: a phrase holds for as long
+    as the phrase runs, not a constant duration."""
+    spans = [{"start": 1.0, "end": 4.2}]
+    zooms = zooms_from_spans(spans, min_duration=0.6)
+    assert zooms[0]["end"] == 4.2
+
+
+def test_short_span_gets_a_duration_floor():
+    """A very short span still needs to clear the ~0.22s ramp in and out, or
+    the punch-in never really lands."""
+    spans = [{"start": 1.0, "end": 1.1}]
+    zooms = zooms_from_spans(spans, min_duration=0.6)
+    assert zooms[0]["end"] - zooms[0]["start"] >= 0.6
+
+
+def test_spans_out_of_start_order_are_still_handled():
+    spans = [{"start": 5.0, "end": 5.5}, {"start": 1.0, "end": 1.5}]
+    zooms = zooms_from_spans(spans, spacing=1.0)
+    assert [z["start"] for z in zooms] == [1.0, 5.0]
+
+
+def test_resolve_span_clamps_out_of_range_indices():
+    words = [{"start": 0.0, "end": 0.4}, {"start": 0.4, "end": 0.8}, {"start": 0.8, "end": 1.2}]
+    span = _resolve_span_times(words, -5, 999)
+    assert span == {"start": 0.0, "end": 1.2}
+
+
+def test_resolve_span_swaps_reversed_indices():
+    words = [{"start": 0.0, "end": 0.4}, {"start": 0.4, "end": 0.8}, {"start": 0.8, "end": 1.2}]
+    assert _resolve_span_times(words, 2, 0) == {"start": 0.0, "end": 1.2}
+
+
+def test_resolve_span_rejects_a_single_word():
+    """The prompt asks for 2+ words; if clamping collapses a span to one word
+    (or the model sent the same index twice), it must not become a zoom."""
+    words = [{"start": 0.0, "end": 0.4}, {"start": 0.4, "end": 0.8}]
+    assert _resolve_span_times(words, 1, 1) is None
+    assert _resolve_span_times(words, -3, -2) is None  # both clamp to index 0
+
+
+def test_resolve_span_rejects_garbage_input():
+    words = [{"start": 0.0, "end": 0.4}, {"start": 0.4, "end": 0.8}]
+    assert _resolve_span_times(words, "not a number", 1) is None
+    assert _resolve_span_times([], 0, 1) is None
 
 
 def test_plan_output_duration_matches_removed_time():
@@ -96,6 +144,14 @@ def test_plan_output_duration_matches_removed_time():
     removed = sum(c["end"] - c["start"] for c in plan["cuts"])
     assert abs(plan["output_duration"] - (5.0 - removed)) < 1e-6
     assert plan["output_duration"] < plan["source_duration"]
+
+
+def test_build_edit_plan_has_no_zooms_before_enrichment():
+    """Heuristics can flag a number as a keyword, but judging which sentence
+    matters needs the LLM -- build_edit_plan alone must not guess."""
+    plan = build_edit_plan(WORDS, source_duration=5.0, cut_silence=False)
+    assert plan["emphasis_spans"] == []
+    assert plan["zooms"] == []
 
 
 def test_cut_silence_false_leaves_the_timeline_alone():

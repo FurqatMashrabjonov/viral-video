@@ -45,8 +45,8 @@ def _fields() -> list[dict]:
          "default": 1.15, "min": 1.02, "max": 1.5, "step": 0.01, "depends_on": "zoom"},
         {"key": "zoom_spacing", "group": "Zoom", "label": "Eng kam oraliq (s)", "type": "number",
          "default": 3.0, "min": 1.0, "max": 15.0, "step": 0.5, "depends_on": "zoom"},
-        {"key": "zoom_duration", "group": "Zoom", "label": "Davomiyligi (s)", "type": "number",
-         "default": 1.2, "min": 0.5, "max": 4.0, "step": 0.1, "depends_on": "zoom"},
+        {"key": "zoom_duration", "group": "Zoom", "label": "Eng kam davomiyligi (s)", "type": "number",
+         "default": 0.6, "min": 0.3, "max": 4.0, "step": 0.1, "depends_on": "zoom"},
 
         # --- sound effects ---
         {"key": "sfx", "group": "Effekt", "label": "Sound effect", "type": "bool", "default": True},

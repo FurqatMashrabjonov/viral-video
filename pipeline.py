@@ -18,7 +18,7 @@ from scribe import transcribe, COST_PER_MINUTE_USD
 from normalize import normalize_words
 from subtitles import build_ass, load_style
 from enhance import enhance, get_video_dims, get_duration, get_fps
-from analyze import build_edit_plan, llm_enrich, plan_zooms, plan_sfx
+from analyze import build_edit_plan, llm_enrich, zooms_from_spans, plan_sfx
 from cost import log_cost
 from settings import merge as merge_settings, defaults as default_settings
 
@@ -180,6 +180,7 @@ def render(project_id: str, settings: dict | None = None, progress_cb=None,
 
         words = plan["words"]
         hook = plan.get("hook")
+        spans = plan.get("emphasis_spans", [])
         t0 = 0.0
         if segment:
             t0, t1 = segment
@@ -188,6 +189,12 @@ def render(project_id: str, settings: dict | None = None, progress_cb=None,
                       "end": round(w["end"] - t0, 3)} for w in words]
             hook = ({**hook, "start": 0.0, "end": min(hook["end"], t1) - t0}
                     if hook and hook["start"] < t1 else None)
+            # Spans live at the plan level, not per word, so they need the same
+            # keep-if-overlapping / shift-to-zero treatment applied by hand.
+            spans = [
+                {"start": round(max(0.0, s["start"] - t0), 3), "end": round(min(s["end"], t1) - t0, 3)}
+                for s in spans if s["end"] > t0 and s["start"] < t1
+            ]
 
         if settings["captions"]:
             style = _apply_style_settings(
@@ -201,16 +208,16 @@ def render(project_id: str, settings: dict | None = None, progress_cb=None,
                       hook=hook, show_emoji=settings["emoji"]).save(str(ass_path))
             burn_ass = str(ass_path)
 
-        # Zoom and sfx placement is a pure function of the words plus a few
-        # numbers, so it is recomputed here from the current settings rather
-        # than read from the plan. Changing the spacing costs nothing.
-        # Placement is computed from the same (possibly shifted) word list, so a
-        # segment preview shows zooms and effects exactly as the full render
-        # would place them around that moment.
+        # Zoom and sfx placement are recomputed here from the current settings
+        # rather than read from the plan, so changing the spacing costs
+        # nothing. Zoom comes from emphasis_spans (whole phrases the LLM
+        # picked out), sfx still comes from per-word keywords -- the two were
+        # deliberately split apart: a keyword highlights one word in the
+        # subtitles, a span is what earns a camera move.
         zooms = sfx = None
         if settings["zoom"]:
-            zooms = plan_zooms(words, [], spacing=settings["zoom_spacing"],
-                               duration=settings["zoom_duration"], scale=settings["zoom_scale"])
+            zooms = zooms_from_spans(spans, spacing=settings["zoom_spacing"],
+                                     min_duration=settings["zoom_duration"], scale=settings["zoom_scale"])
         if settings["sfx"]:
             sfx = plan_sfx(words, min_spacing=settings["sfx_spacing"])
 

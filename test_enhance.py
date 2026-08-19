@@ -159,11 +159,20 @@ def test_broll_gets_the_same_lut_and_strength_as_the_main_grade():
     assert g.count("all_opacity=0.42") == len(BROLL)
 
 
-def test_broll_height_is_capped_short_of_the_full_frame():
-    """The backlog spec is explicit: partial overlay, presenter stays visible,
-    never full-screen."""
+def test_broll_fills_the_entire_frame_not_a_partial_overlay():
+    """Real cutaway, not PiP: the clip must cover the full output size, cropped
+    to fill rather than stretched."""
     g = build_broll_filter(BROLL[:1], {0: 3}, 1080, 1920, "luts/warm_standard.cube", 0.6, "zoomed")
-    assert "scale=1080:1114" in g  # 1920 * 0.58, rounded
+    assert "scale=1080:1920:force_original_aspect_ratio=increase" in g
+    assert "crop=1080:1920" in g
+
+
+def test_broll_is_trimmed_to_its_own_window_length():
+    """A Pexels source clip usually outlasts its ~1.6s window. Untrimmed, the
+    longer broll input would become the long pole and stretch total output
+    duration past the main video's real length."""
+    g = build_broll_filter(BROLL, BROLL_INPUTS, 1080, 1920, "luts/warm_standard.cube", 0.6, "zoomed")
+    assert g.count("trim=duration=1.600") == 2  # 3.1-1.5 and 9.6-8.0, both 1.6s
 
 
 def test_broll_chains_onto_the_given_source_label_not_a_hardcoded_one():

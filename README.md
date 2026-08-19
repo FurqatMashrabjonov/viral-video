@@ -227,8 +227,15 @@ uchrashuv", "mashinada shahar bo'ylab") topib, har biriga inglizcha 1-3 so'zlik
 qidiruv so'rovi yozadi (`broll_spans`). Render paytida `pexels.py` shu so'rov
 bilan Pexels'dan klip qidiradi, eng yaqin aspekt nisbatli va 800px dan
 past renditsiyani tanlaydi (2-3 soniyalik overlay uchun 4K shart emas), va
-video ustiga **PiP** sifatida qo'yadi — kadr balandligining yuqori 58% qismida,
-pastda prezenter va subtitr zonasi ochiq qoladi. Hech qachon to'liq ekran emas.
+o'sha oyna davomida asosiy videoni **to'liq almashtiradi** — prezenter kesiladi,
+B-roll to'liq ekranga chiqadi, oyna tugagach prezenter davom etadi (PiP emas,
+haqiqiy cutaway). Narratsiya va subtitr uzilmaydi: B-roll'ning o'z audio
+qatori hech qachon xaritalanmaydi (`build_audio_filter` faqat `[0:a]`ga
+tegadi), shuning uchun ovoz to'xtovsiz davom etadi, faqat video qatori
+almashadi. Pexels manba klipi odatda ko'rsatish oynasidan (~1.6s) uzunroq
+bo'lgani uchun, har bir B-roll input o'z oynasi uzunligiga trim qilinadi —
+aks holda ffmpeg'ning `overlay` filtri uzunroq klipni asosiy videodan
+"uzunroq input" deb hisoblab, chiqish davomiyligini cho'zib yuborardi.
 
 B-roll'ga asosiy videoning **o'zi LUT'i, o'zi kuchida** qo'llaniladi — rang
 mos kelishi uchun. Ko'rsatish davomiyligi qat'iy qisqa (`BROLL_DISPLAY_SECONDS`,
@@ -248,7 +255,7 @@ yuboriladi — butun render yiqilmaydi.
 .venv/bin/python test_normalize.py        # apostrof/kod-almashish testlari
 .venv/bin/python test_analyze.py          # kesim, vaqt remap, zoom oraliq
 .venv/bin/python test_subtitles.py        # kalit so'z teglari, hook
-.venv/bin/python test_enhance.py          # zoom ifodasi, sfx audio grafi, broll PiP grafi
+.venv/bin/python test_enhance.py          # zoom ifodasi, sfx audio grafi, broll cutaway grafi
 .venv/bin/python test_pexels.py           # renditsiya tanlash, kesh yo'llari (tarmoqsiz)
 .venv/bin/python test_settings.py         # sxema butunligi, qiymat validatsiyasi
 .venv/bin/python test_events.py           # hodisa jurnali, SSE qayta ulanish

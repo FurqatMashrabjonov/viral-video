@@ -99,32 +99,42 @@ def build_zoom_filter(zooms: list[dict], width: int, height: int, fps: float) ->
     )
 
 
-BROLL_HEIGHT_FRACTION = 0.58  # leaves the lower-middle third, where captions live, clear
-
-
 def build_broll_filter(broll: list[dict], broll_inputs: dict, width: int, height: int,
                        lut_path: str, lut_strength: float, source_label: str) -> str:
-    """One PiP overlay per clip, chained onto `source_label`, each gated to its
-    own time window. Returns a graph fragment ending in [pip].
+    """One full-frame cutaway per clip, chained onto `source_label`, each gated
+    to its own time window. Returns a graph fragment ending in [pip].
+
+    This is a real cut, not a PiP: the B-roll clip replaces the presenter
+    frame entirely for its window, then the presenter frame resumes. Audio
+    is untouched here -- broll inputs are only ever referenced as [idx:v],
+    never [idx:a], so the narration (built purely from [0:a] in
+    build_audio_filter) plays through the swap uninterrupted.
+
+    Each B-roll input is trimmed to its own on-screen window length. Pexels
+    source clips almost always outlast the ~1.6s window they're shown for; a
+    downloaded clip longer than the main video makes ffmpeg's overlay treat
+    IT as the long pole and freeze-repeat the main video's last frame past
+    its real end, stretching total output duration. Trimming first keeps the
+    main video the longer input, so total duration is governed by it alone.
 
     Every clip gets the SAME LUT at the SAME strength as the presenter frame,
     graded exactly like the main picture's own grade step (split, lut3d,
     blend) -- an ungraded insert would read as visibly colder/flatter than
-    everything around it. Height is capped well short of the full frame on
-    purpose: the backlog spec is explicit that this is a partial overlay, the
-    presenter stays visible, and it never goes full-screen.
+    everything around it.
     """
     if not broll or not broll_inputs:
         return f"[{source_label}]copy[pip]"
 
-    br_h = round(height * BROLL_HEIGHT_FRACTION)
     parts = []
     current = source_label
     for i, clip in enumerate(broll):
         idx = broll_inputs[i]
         out = f"pip{i}"
+        dur = clip["end"] - clip["start"]
         parts.append(
-            f"[{idx}:v]scale={width}:{br_h},setsar=1[br{i}raw]"
+            f"[{idx}:v]trim=duration={dur:.3f},setpts=PTS-STARTPTS,"
+            f"scale={width}:{height}:force_original_aspect_ratio=increase,"
+            f"crop={width}:{height},setsar=1[br{i}raw]"
             f";[br{i}raw]split=2[br{i}o][br{i}f]"
             f";[br{i}f]lut3d=file='{lut_path}'[br{i}g]"
             f";[br{i}o][br{i}g]blend=all_mode=normal:all_opacity={lut_strength}[br{i}]"

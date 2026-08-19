@@ -18,6 +18,7 @@ MIN_ZOOM_SPACING = 3.0      # research: a visual change every 3-5s
 ZOOM_DURATION = 1.2       # render ramps ~0.22s in and out, so leave room to hold
 ZOOM_SCALE = 1.15
 HOOK_END = 3.0
+LOW_CONFIDENCE_LOGPROB = -1.0  # below this, Scribe was guessing -- flag for review
 
 _HAS_DIGIT = re.compile(r"\d")
 
@@ -67,6 +68,20 @@ def mark_keywords(words: list[dict]) -> list[dict]:
     return out
 
 
+def mark_low_confidence(words: list[dict], threshold: float = LOW_CONFIDENCE_LOGPROB) -> list[dict]:
+    """Flag words Scribe was unsure about, so the editor can point the user at
+    exactly those instead of making them re-read the whole transcript.
+
+    A missing logprob (older API response, or the field genuinely absent) is
+    left unflagged -- silence is not evidence of a bad guess.
+    """
+    out = []
+    for w in words:
+        lp = w.get("logprob")
+        out.append({**w, "low_confidence": lp is not None and lp < threshold})
+    return out
+
+
 def plan_zooms(words: list[dict], cuts_on_new_timeline: list[float],
                spacing: float = MIN_ZOOM_SPACING, duration: float = ZOOM_DURATION,
                scale: float = ZOOM_SCALE) -> list[dict]:
@@ -109,7 +124,7 @@ def plan_sfx(words: list[dict], min_spacing: float = SFX_MIN_SPACING) -> list[di
 
 def build_edit_plan(words: list[dict], source_duration: float, cut_silence: bool = True) -> dict:
     cuts = find_silences(words) if cut_silence else []
-    new_words = mark_keywords(remap_words(words, cuts))
+    new_words = mark_low_confidence(mark_keywords(remap_words(words, cuts)))
     cut_marks = [remap_time(c["start"], cuts) for c in cuts]
 
     return {

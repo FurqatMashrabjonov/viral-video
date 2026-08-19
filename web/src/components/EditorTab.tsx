@@ -117,9 +117,17 @@ export function EditorTab({ projectId, plan, settings, onSaved }: Props) {
                     w.keyword
                       ? "bg-emerald-500/15 font-medium text-emerald-700 dark:text-emerald-300"
                       : "hover:bg-accent",
+                    w.low_confidence &&
+                      "underline decoration-wavy decoration-amber-500 underline-offset-4",
                     selected === i && "ring-2 ring-primary",
                   )}
-                  title={w.keyword ? "Kalit so'zni o'chirish" : "Kalit so'z qilish"}
+                  title={
+                    w.low_confidence
+                      ? "Scribe bu so'zga unchalik ishonmadi — tekshirib ko'ring"
+                      : w.keyword
+                        ? "Kalit so'zni o'chirish"
+                        : "Kalit so'z qilish"
+                  }
                 >
                   {w.word}
                 </button>
@@ -129,6 +137,8 @@ export function EditorTab({ projectId, plan, settings, onSaved }: Props) {
         </p>
         <p className="mt-2 text-xs text-muted-foreground tabular-nums">
           {words.length} so'z · {words.filter((w) => w.keyword).length} kalit
+          {words.some((w) => w.low_confidence) &&
+            ` · ${words.filter((w) => w.low_confidence).length} shubhali (tagi to'lqinli chizilgan)`}
         </p>
       </div>
 

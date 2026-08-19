@@ -1,7 +1,11 @@
 """ElevenLabs Scribe v2 speech-to-text adapter.
 
 Sends an audio file, returns word-level timestamps:
-[{"word": str, "start": float, "end": float}, ...]
+[{"word": str, "start": float, "end": float, "logprob": float | None}, ...]
+
+logprob is Scribe's log-probability for the word: near 0 means confident,
+strongly negative means the model was guessing. Kept so the editor can flag
+words worth a second look instead of the user re-reading the whole transcript.
 """
 import os
 import time
@@ -58,7 +62,7 @@ def transcribe(audio_path: str, language_code: str = "uzb", max_retries: int = 3
         raise ScribeError(f"Scribe API failed after {max_retries} attempts: {last_error}")
 
     words = [
-        {"word": w["text"], "start": w["start"], "end": w["end"]}
+        {"word": w["text"], "start": w["start"], "end": w["end"], "logprob": w.get("logprob")}
         for w in data.get("words", [])
         if w.get("type", "word") == "word"
     ]

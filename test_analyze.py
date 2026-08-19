@@ -7,6 +7,7 @@ from analyze import (
     remap_time,
     remap_words,
     mark_keywords,
+    mark_low_confidence,
     plan_zooms,
     build_edit_plan,
 )
@@ -101,6 +102,34 @@ def test_cut_silence_false_leaves_the_timeline_alone():
     assert plan["cuts"] == []
     assert plan["output_duration"] == plan["source_duration"]
     assert [w["start"] for w in plan["words"]] == [w["start"] for w in WORDS]
+
+
+def test_low_logprob_is_flagged():
+    words = [{"word": "aniq", "start": 0.0, "end": 0.4, "logprob": -0.12},
+             {"word": "shubhali", "start": 0.4, "end": 0.8, "logprob": -1.84}]
+    marked = mark_low_confidence(words)
+    assert marked[0]["low_confidence"] is False
+    assert marked[1]["low_confidence"] is True
+
+
+def test_missing_logprob_is_not_flagged():
+    """Silence is not evidence of a bad guess -- an absent field must not read
+    as low confidence, or every pre-logprob transcript lights up red."""
+    words = [{"word": "x", "start": 0.0, "end": 0.4}]
+    assert mark_low_confidence(words)[0]["low_confidence"] is False
+
+
+def test_threshold_is_a_strict_cutoff():
+    words = [{"word": "x", "start": 0.0, "end": 0.4, "logprob": -1.0}]
+    assert mark_low_confidence(words, threshold=-1.0)[0]["low_confidence"] is False
+
+
+def test_build_edit_plan_flags_low_confidence_words():
+    words = [{"word": "Bugun", "start": 0.0, "end": 0.4, "logprob": -0.05},
+             {"word": "foiz", "start": 0.5, "end": 0.9, "logprob": -2.1}]
+    plan = build_edit_plan(words, source_duration=1.0, cut_silence=False)
+    flags = [w["low_confidence"] for w in plan["words"]]
+    assert flags == [False, True]
 
 
 if __name__ == "__main__":

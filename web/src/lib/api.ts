@@ -11,7 +11,14 @@ export type Project = {
   created_at: number
 }
 
-export type Word = { word: string; start: number; end: number; keyword: boolean }
+export type Word = {
+  word: string
+  start: number
+  end: number
+  keyword: boolean
+  logprob?: number | null
+  low_confidence?: boolean
+}
 export type Hook = { text: string; start: number; end: number } | null
 export type Plan = { words: Word[]; hook: Hook; zooms: unknown[]; sfx: unknown[] }
 

@@ -1,0 +1,24 @@
+mode: pop
+font: Montserrat Black
+font_bold: Montserrat Black
+font_size: 88
+bold: false
+uppercase: true
+
+# thick outline, white base text, no box -- Hormozi's look is a colour swap on
+# keywords, not a filled highlight (that's bold_highlight/TikTok style below)
+primary_color: [255, 255, 255]
+outline_color: [0, 0, 0]
+outline_width: 7
+shadow: 0
+margin_v: 260
+margin_h: 50
+
+keyword_color: [255, 214, 0]
+
+pop_duration_ms: 100
+pop_scale_from: 145
+
+hook_color: [255, 214, 0]
+hook_outline_width: 6
+hook_margin_v: 200

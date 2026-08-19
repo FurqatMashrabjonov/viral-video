@@ -72,16 +72,33 @@ o'tkaziladi (kodda `ponytail:` izohi bilan belgilangan).
 
 ## Yangi style qo'shish
 
-`styles/*.yaml` — style = data, kod emas. Namuna uchun
-`styles/warm_karaoke.yaml` ga qarang. Maydonlar: `mode` (`karaoke` yoki
-`pop`), `font`/`font_bold`, `font_size`, ranglar (`[r,g,b]`), `outline_width`,
-`margin_v`/`margin_h`, qatorlash (`max_words_per_line`, `max_chars_per_line`)
-yoki pop animatsiyasi (`pop_duration_ms`, `pop_scale_from`).
+`styles/*.yaml` — style = data, kod emas, `settings.py` diskdan avtomatik
+o'qiydi (yangi fayl qo'shilsa `GET /api/schema`da darhol paydo bo'ladi, kod
+o'zgartirish shart emas). 5 ta tayyor: `warm_karaoke`, `bold_pop`,
+`clean_minimal`, `hormozi`, `bold_highlight`.
+
+Uchta rejim (`mode`):
+- `karaoke` — butun ibora ko'rinadi, aytilgan so'z rang bilan to'ladi (`\k`)
+- `pop` — har so'z alohida, kattalashib kiradi
+- `highlight` — butun ibora ko'rinadi, aytilayotgan so'zning **foni**
+  yoqiladi-o'chadi, o'z vaqtiga qadab (`subtitles.py:_highlight_tags`) — real
+  render bilan tekshirilgan: ikkita so'z, ikkita mustaqil oyna, har biri faqat
+  o'z vaqtida faol.
+
+Umumiy maydonlar: `font`/`font_bold`, `font_size`, ranglar (`[r,g,b]`),
+`outline_width`, `margin_v`/`margin_h`, qatorlash (`max_words_per_line`,
+`max_chars_per_line`), pop animatsiyasi (`pop_duration_ms`, `pop_scale_from`),
+`uppercase` (matnni KATTA HARFGA o'giradi — faqat ko'rinishda, saqlangan
+so'zga tegmaydi, kalit so'z moslashtirishga ta'sir qilmaydi).
 
 Yangi shrift kerak bo'lsa — `fonts/` papkaga qo'shib, style yaml da
 `font`/`font_bold` nomini fayl ichidagi shrift nomiga moslashtiring
 (`fc-scan fonts/X.ttf | grep family` bilan tekshiring). Oʻzbek belgilar
-(`ʻ`, kirill Ў/Қ/Ғ/Ҳ) borligini `fontTools` bilan tasdiqlang.
+(`ʻ`, kirill Ў/Қ/Ғ/Ҳ) borligini `fontTools` bilan tasdiqlang — **Anton va
+Bebas Neue bu tekshiruvdan o'tmadi** (kirill umuman yo'q, Bebas Neue’da
+apostrof ham yo'q), shuning uchun `hormozi` stili o'rniga Montserrat Black
+ishlatadi — bir xil og'ir/siqilgan ko'rinish, lekin to'liq oʻzbek+kirill
+qamrovi bilan.
 
 ## Yangi LUT qo'shish
 

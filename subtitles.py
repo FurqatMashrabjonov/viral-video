@@ -6,6 +6,7 @@ import pysubs2
 EMOJI_FONT = "Noto Emoji"          # monochrome, renders through the normal text
                                     # path -- no colour-font support needed in libass
 EMOJI_SCALE = 130                  # the glyph reads small next to bold caption text
+HIGHLIGHT_SWITCH_MS = 40           # near-instant box on/off, not a visible fade
 
 
 def load_style(style_path: str) -> dict:
@@ -15,6 +16,14 @@ def load_style(style_path: str) -> dict:
 
 def _style_font(style: dict) -> str:
     return style["font_bold"] if style.get("bold") else style["font"]
+
+
+def _display_word(word: dict, style: dict) -> str:
+    """The word as it's burned into the video -- upper-cased for a style that
+    wants it. Never mutates the stored word: the editor and keyword matching
+    still need the original casing."""
+    text = word["word"]
+    return text.upper() if style.get("uppercase") else text
 
 
 def _color(rgb, alpha=0):
@@ -45,7 +54,9 @@ def _make_ssa_style(style: dict) -> pysubs2.SSAStyle:
     # BorderStyle 3 turns the outline into a filled box behind the text, which is
     # what makes a per-word highlight possible -- but it also means there is no
     # outline left, so every word needs its own box to stay legible over video.
-    if style.get("keyword_box"):
+    # "highlight" mode needs this unconditionally: the box is the whole point of
+    # the mode, not an optional keyword accent on top of it.
+    if style.get("keyword_box") or style.get("mode") == "highlight":
         s.borderstyle = 3
         s.outline = style.get("box_pad", 10)
     else:
@@ -118,13 +129,48 @@ def _karaoke_text(group: list[dict], style: dict, show_emoji: bool) -> str:
     for w in group:
         dur_cs = max(1, round((w["end"] - w["start"]) * 100))
         tags = _keyword_tags(style, w.get("keyword", False))
-        run = f"{{{tags}\\k{dur_cs}}}{w['word']}"
+        run = f"{{{tags}\\k{dur_cs}}}{_display_word(w, style)}"
         if show_emoji and w.get("emoji"):
             run += _emoji_run(style, w["emoji"])
         parts.append(run)
     # Joining with a bare space leaves the separator under the *preceding* word's
     # tags, so a highlight box gets trailing padding instead of a stray sliver of
     # the next word's colour.
+    return " ".join(parts)
+
+
+def _highlight_tags(style: dict, word: dict, event_start_ms: int) -> str:
+    """The whole phrase stays on screen; only the word currently being spoken
+    gets a background box, timed to switch on and off at that word's own
+    start/end -- proven against a real render (two words, two independent
+    windows, each box appearing only in its own word's frame).
+
+    Scoped per run exactly like _keyword_tags: each word schedules its own
+    \\t() transforms on \\3c/\\3a, so at any render timestamp only the word
+    whose window contains that timestamp is showing the active colour --
+    nothing shared or global to get out of sync.
+    """
+    start_rel = int(word["start"] * 1000) - event_start_ms
+    end_rel = int(word["end"] * 1000) - event_start_ms
+    neutral_alpha = style.get("box_alpha", 96)
+    neutral_color = _tag_color(style.get("box_color", [0, 0, 0]))
+    active_color = _tag_color(style.get("keyword_box_color", style["primary_color"]))
+    m = HIGHLIGHT_SWITCH_MS
+    return (
+        f"\\3a&H{neutral_alpha:02X}&\\3c{neutral_color}"
+        f"\\t({start_rel},{start_rel + m},\\3c{active_color}\\3a&H00&)"
+        f"\\t({end_rel},{end_rel + m},\\3c{neutral_color}\\3a&H{neutral_alpha:02X}&)"
+    )
+
+
+def _highlight_text(group: list[dict], style: dict, show_emoji: bool) -> str:
+    event_start_ms = int(group[0]["start"] * 1000)
+    parts = []
+    for w in group:
+        run = f"{{{_highlight_tags(style, w, event_start_ms)}}}{_display_word(w, style)}"
+        if show_emoji and w.get("emoji"):
+            run += _emoji_run(style, w["emoji"])
+        parts.append(run)
     return " ".join(parts)
 
 
@@ -159,13 +205,19 @@ def build_ass(words: list[dict], style: dict, video_width: int, video_height: in
             end_ms = int(group[-1]["end"] * 1000)
             subs.append(pysubs2.SSAEvent(start=start_ms, end=end_ms,
                                         text=_karaoke_text(group, style, show_emoji), style="Default"))
+    elif mode == "highlight":
+        for group in group_words(words, style.get("max_words_per_line", 4), style.get("max_chars_per_line", 22)):
+            start_ms = int(group[0]["start"] * 1000)
+            end_ms = int(group[-1]["end"] * 1000)
+            subs.append(pysubs2.SSAEvent(start=start_ms, end=end_ms,
+                                        text=_highlight_text(group, style, show_emoji), style="Default"))
     elif mode == "pop":
         pop_ms = style.get("pop_duration_ms", 120)
         scale_from = style.get("pop_scale_from", 130)
         for w in words:
             tags = _keyword_tags(style, w.get("keyword", False))
             text = (f"{{\\fscx{scale_from}\\fscy{scale_from}"
-                    f"\\t(0,{pop_ms},\\fscx100\\fscy100){tags}}}{w['word']}")
+                    f"\\t(0,{pop_ms},\\fscx100\\fscy100){tags}}}{_display_word(w, style)}")
             if show_emoji and w.get("emoji"):
                 text += _emoji_run(style, w["emoji"])
             subs.append(pysubs2.SSAEvent(start=int(w["start"] * 1000), end=int(w["end"] * 1000),
@@ -176,10 +228,11 @@ def build_ass(words: list[dict], style: dict, video_width: int, video_height: in
     if hook and hook.get("text"):
         subs.styles["Hook"] = _make_hook_style(style)
         fade = style.get("hook_fade_ms", 250)
+        hook_text = hook["text"].upper() if style.get("uppercase") else hook["text"]
         subs.append(pysubs2.SSAEvent(
             start=int(hook.get("start", 0.0) * 1000),
             end=int(hook.get("end", 3.0) * 1000),
-            text=f"{{\\fad({fade},{fade})}}{hook['text']}",
+            text=f"{{\\fad({fade},{fade})}}{hook_text}",
             style="Hook",
         ))
 

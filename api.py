@@ -14,20 +14,16 @@ import shutil
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Body, Request
+from fastapi import FastAPI, UploadFile, File, HTTPException, Body, Request
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 import db
-from pipeline import run_pipeline, ingest, render, DEFAULT_SETTINGS
+from pipeline import ingest, render, DEFAULT_SETTINGS
 from settings import schema as settings_schema, merge as merge_settings
-
-UPLOAD_DIR = Path("uploads")
-UPLOAD_DIR.mkdir(exist_ok=True)
 
 app = FastAPI()
 executor = ThreadPoolExecutor(max_workers=1)
-jobs: dict[str, dict] = {}          # legacy single-shot jobs
 
 POLL_INTERVAL = 0.4     # seconds between checks for new journal rows
 HEARTBEAT_EVERY = 15.0  # comment frame so idle proxies keep the stream open
@@ -45,21 +41,18 @@ APP_DIR = Path("static/app")   # built frontend bundle, written by `npm run buil
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
-    """The React bundle when it has been built, otherwise the plain test page.
-    Keeping the fallback means the backend is usable without a Node toolchain."""
     built = APP_DIR / "index.html"
-    if built.exists():
-        return built.read_text(encoding="utf-8")
-    return Path("static/index.html").read_text(encoding="utf-8")
+    if not built.exists():
+        return (
+            "<pre>Frontend bundle topilmadi. "
+            "`cd web &amp;&amp; npm run build` ni ishga tushiring, "
+            "yoki ishlab chiqishda `npm run dev` orqali oching.</pre>"
+        )
+    return built.read_text(encoding="utf-8")
 
 
 if APP_DIR.exists():
     app.mount("/assets", StaticFiles(directory=APP_DIR / "assets"), name="assets")
-
-
-@app.get("/legacy", response_class=HTMLResponse)
-async def legacy_index():
-    return Path("static/index.html").read_text(encoding="utf-8")
 
 
 # --- projects ---------------------------------------------------------------
@@ -236,57 +229,3 @@ async def api_schema():
         "stages": db.STAGES,
         "terminal_stages": sorted(db.TERMINAL_STAGES),
     }
-
-
-# --- legacy single-shot flow (the existing test UI) --------------------------
-
-@app.post("/process")
-async def process(file: UploadFile = File(...), style: str = Form("warm_karaoke")):
-    job_id = db.new_id()
-    input_path = UPLOAD_DIR / f"{job_id}_{file.filename}"
-    with open(input_path, "wb") as f:
-        shutil.copyfileobj(file.file, f)
-
-    jobs[job_id] = {"status": "queued", "progress": 0.0}
-    executor.submit(_process_job, job_id, str(input_path), style)
-    return {"job_id": job_id}
-
-
-def _process_job(job_id: str, input_path: str, style: str):
-    jobs[job_id]["status"] = "processing"
-    try:
-        metadata = run_pipeline(
-            input_path, style_name=style,
-            progress_cb=lambda f: jobs[job_id].update(progress=f),
-        )
-        jobs[job_id].update(status="done", progress=1.0, metadata=metadata)
-    except Exception as e:
-        jobs[job_id].update(status="error", error=str(e))
-
-
-@app.get("/status/{job_id}")
-async def status(job_id: str):
-    job = jobs.get(job_id)
-    if not job:
-        raise HTTPException(404, "job not found")
-    return {"status": job["status"], "progress": job.get("progress", 0.0), "error": job.get("error")}
-
-
-@app.get("/result/{job_id}")
-async def result(job_id: str):
-    job = jobs.get(job_id)
-    if not job:
-        raise HTTPException(404, "job not found")
-    if job["status"] != "done":
-        raise HTTPException(409, f"job status is {job['status']}")
-    return FileResponse(job["metadata"]["output_path"], media_type="video/mp4")
-
-
-@app.get("/result/{job_id}/metadata")
-async def result_metadata(job_id: str):
-    job = jobs.get(job_id)
-    if not job:
-        raise HTTPException(404, "job not found")
-    if job["status"] != "done":
-        raise HTTPException(409, f"job status is {job['status']}")
-    return job["metadata"]

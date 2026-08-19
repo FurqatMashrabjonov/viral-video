@@ -28,7 +28,6 @@ COPY fonts fonts
 COPY luts luts
 COPY sfx sfx
 COPY styles styles
-COPY static/index.html static/index.html
 
 # State (sqlite + media) lives on a volume so it survives container rebuilds.
 VOLUME /app/data

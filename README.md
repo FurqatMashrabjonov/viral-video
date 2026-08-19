@@ -40,14 +40,16 @@ hook sarlavha va semantik kalit so'zlar chiqmaydi.
 .venv/bin/python -c "from pipeline import run_pipeline; print(run_pipeline('input.mp4', style_name='warm_karaoke'))"
 ```
 
-## API orqali ishlatish
+## API va web UI orqali ishlatish
 
 ```bash
+cd web && npm install && npm run build && cd ..
 .venv/bin/uvicorn api:app --reload
 ```
 
-`http://127.0.0.1:8000/` — brauzerda ochiladigan test UI (video yukla, style
-tanla, natijani ko'r).
+`http://127.0.0.1:8000/` — React ilovasi (yuklash, jonli progress, sozlamalar
+paneli, subtitr muharriri). Ishlab chiqishda `cd web && npm run dev` alohida
+port ochadi va `/api` so'rovlarini backendga proksi qiladi (`vite.config.ts`).
 
 Endpointlar:
 
@@ -63,9 +65,6 @@ Endpointlar:
 | GET | `/api/schema` | sozlamalar sxemasi + standartlar |
 | GET | `/api/projects/{id}/stream` | SSE: jonli bosqich va progress |
 | GET | `/api/projects/{id}/events` | jurnaldagi barcha hodisalar |
-
-Eski bir martalik oqim ham ishlaydi (`/process`, `/status/{id}`,
-`/result/{id}`) — mavjud test UI shundan foydalanadi.
 
 Navbat hozircha bitta ishchi bilan in-process (`ThreadPoolExecutor`). Ko'p
 ishchi/qayta ishga tushganda saqlanishi kerak bo'lsa — Celery/RQ ga
@@ -217,11 +216,16 @@ qo'shadi: Scribe daqiqa/narx + ffmpeg CPU soniya/narx + jami USD/UZS
 (`cost.py`). UZS kursi va CPU narxi placeholder — real infratuzilma
 narxlariga moslashtiring.
 
-## Demo skriptlar (rivojlanish jarayonida yozilgan)
+## Docker
 
-- `demo_milestone2.py` — normalize -> ASS -> ffmpeg burn (karaoke + pop)
-- `demo_milestone3.py` — sintetik qorong'i/shovqinli klip -> enhance -> compare
-- `demo_milestone4.py` — FastAPI to'liq oqim, Scribe mock qilingan
+```bash
+cp .env.example .env   # kalitlarni to'ldiring
+docker compose up --build
+```
+
+Ikki bosqichli image: `web` bosqichi React bundle'ni quradi (Node yakuniy
+image'da qolmaydi), `api` bosqichi ffmpeg+libass+shriftlar bilan uni beradi.
+SQLite va media `data` nomli hajmda — konteyner qayta qurilsa ham saqlanadi.
 
 ## Nima qurilmagan (backlog)
 

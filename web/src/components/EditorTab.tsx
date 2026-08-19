@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { Eye, Save } from "lucide-react"
+import { Eye, Save, Sparkles } from "lucide-react"
 import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
@@ -26,6 +26,24 @@ export function EditorTab({ projectId, plan, settings, onSaved }: Props) {
   const [dirty, setDirty] = useState(false)
   const [preview, setPreview] = useState<Render | null>(null)
   const [previewBusy, setPreviewBusy] = useState(false)
+  const [enriching, setEnriching] = useState(false)
+
+  async function reEnrich() {
+    setEnriching(true)
+    try {
+      const next = await api.enrich(projectId)
+      setWords(next.words)
+      setHook(next.hook?.text ?? "")
+      setDirty(false)
+      onSaved(next)
+      const emojiCount = next.words.filter((w) => w.emoji).length
+      toast.success(`Hook va kalit so'zlar yangilandi (${emojiCount} emoji)`)
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Yangilab bo'lmadi")
+    } finally {
+      setEnriching(false)
+    }
+  }
 
   async function save() {
     const next = { ...plan, hook: hook.trim() ? { text: hook.trim(), start: 0, end: 3 } : null, words }
@@ -130,6 +148,7 @@ export function EditorTab({ projectId, plan, settings, onSaved }: Props) {
                   }
                 >
                   {w.word}
+                  {w.emoji && <span className="ml-1">{w.emoji}</span>}
                 </button>
               )}
             </span>
@@ -161,7 +180,16 @@ export function EditorTab({ projectId, plan, settings, onSaved }: Props) {
               ? `Oldindan ko'rish: «${words[selected].word}»`
               : "So'z tanlang"}
         </Button>
+        <Button onClick={() => void reEnrich()} disabled={enriching} variant="outline">
+          <Sparkles className="size-4" />
+          {enriching ? "Yangilanmoqda…" : "Hook/emoji yangilash"}
+        </Button>
       </div>
+      <p className="text-xs text-muted-foreground">
+        Hook/emoji yangilash — Gemini transkriptni qayta o'qib, hookni <strong>almashtiradi</strong> va
+        yangi emoji tanlaydi. Scribe'ga bormaydi, faqat eski loyihalarda hook/emoji bo'lmasa
+        yoki qayta urinib ko'rmoqchi bo'lsangiz ishlatiladi.
+      </p>
 
       {preview?.status === "done" && (
         <video

@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import db
-from pipeline import run_pipeline, ingest, render
+from pipeline import run_pipeline, ingest, render, re_enrich
 
 MOCK_WORDS = [
     {"word": "Salom", "start": 0.2, "end": 0.6},
@@ -117,6 +117,50 @@ def test_segment_render_crops_and_shifts():
     # the word at 0.6-1.2 shifts to start at zero; the one before the slice is gone
     assert "oʻzbekcha" in ass
     assert "Salom" not in ass
+
+
+FAKE_HOOK = {"text": "Yangi hook", "start": 0.0, "end": 3.0}
+
+
+def test_re_enrich_never_calls_scribe():
+    """The whole point: a project ingested without a hook (or before this field
+    existed) can be enriched later without paying for transcription again."""
+    with patch("pipeline.transcribe", return_value=MOCK_WORDS) as scribe:
+        project_id = ingest(str(_clip()), enrich=False)
+        assert db.get_plan(project_id)["hook"] is None
+
+        with patch("pipeline.llm_enrich", return_value={**db.get_plan(project_id), "hook": FAKE_HOOK}):
+            re_enrich(project_id)
+
+        assert scribe.call_count == 1, "re-enrich went back to Scribe"
+
+
+def test_re_enrich_persists_the_updated_plan():
+    with patch("pipeline.transcribe", return_value=MOCK_WORDS):
+        project_id = ingest(str(_clip()), enrich=False)
+
+    with patch("pipeline.llm_enrich", return_value={**db.get_plan(project_id), "hook": FAKE_HOOK}):
+        result = re_enrich(project_id)
+
+    assert result["hook"]["text"] == "Yangi hook"
+    assert db.get_plan(project_id)["hook"]["text"] == "Yangi hook"
+
+
+def test_re_enrich_unknown_project_raises():
+    try:
+        re_enrich("no-such-project")
+        assert False, "should have raised"
+    except ValueError:
+        pass
+
+
+def test_re_enrich_without_a_plan_raises():
+    project_id = db.create_project("no-plan-yet", "x.mp4")
+    try:
+        re_enrich(project_id)
+        assert False, "should have raised"
+    except ValueError:
+        pass
 
 
 if __name__ == "__main__":

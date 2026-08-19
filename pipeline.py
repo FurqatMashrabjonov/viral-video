@@ -106,6 +106,33 @@ def ingest(source_path: str, name: str | None = None, language_code: str = "uzb"
     return project_id
 
 
+def re_enrich(project_id: str, stage_cb=None) -> dict:
+    """Re-run the LLM pass (hook, keywords, emoji) on the stored transcript.
+
+    For a project ingested before a given enrichment field existed, or when the
+    user just wants a fresh hook. Never touches Scribe -- llm_enrich() only
+    reads plan["words"], which stays exactly as ingest() (and any manual edit
+    since) left it, so this costs a single Gemini call and nothing else.
+    """
+    def stage(s, message=None):
+        db.add_event(project_id, s, message=message)
+        if stage_cb:
+            stage_cb(s)
+
+    db.init()
+    if not db.get_project(project_id):
+        raise ValueError(f"unknown project {project_id}")
+    plan = db.get_plan(project_id)
+    if not plan:
+        raise ValueError(f"project {project_id} has no plan yet")
+
+    stage("enrich")
+    plan = llm_enrich(plan)
+    db.save_plan(project_id, plan)
+    stage("ready")
+    return plan
+
+
 # --- phase B: as often as the user likes ------------------------------------
 
 def render(project_id: str, settings: dict | None = None, progress_cb=None,

@@ -19,7 +19,7 @@ from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 import db
-from pipeline import ingest, render, DEFAULT_SETTINGS
+from pipeline import ingest, render, re_enrich, DEFAULT_SETTINGS
 from settings import schema as settings_schema, merge as merge_settings
 
 app = FastAPI()
@@ -99,6 +99,25 @@ async def api_save_plan(project_id: str, plan: dict = Body(...)):
         raise HTTPException(404, "project not found")
     db.save_plan(project_id, plan)
     return {"ok": True}
+
+
+@app.post("/api/projects/{project_id}/enrich")
+async def api_enrich(project_id: str):
+    """Re-run hook/keyword/emoji generation on the stored transcript. A few
+    seconds of Gemini, no Scribe call -- unlike render, this is cheap enough to
+    just await and hand back the updated plan directly rather than making the
+    client poll a job id."""
+    if not db.get_project(project_id):
+        raise HTTPException(404, "project not found")
+    if not db.get_plan(project_id):
+        raise HTTPException(409, "project has no plan yet")
+
+    loop = asyncio.get_event_loop()
+    try:
+        plan = await loop.run_in_executor(executor, re_enrich, project_id)
+    except Exception as e:
+        raise HTTPException(502, f"enrich failed: {e}")
+    return plan
 
 
 # --- renders ----------------------------------------------------------------

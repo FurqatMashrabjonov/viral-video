@@ -18,6 +18,7 @@ export type Word = {
   keyword: boolean
   logprob?: number | null
   low_confidence?: boolean
+  emoji?: string | null
 }
 export type Hook = { text: string; start: number; end: number } | null
 export type Plan = { words: Word[]; hook: Hook; zooms: unknown[]; sfx: unknown[] }
@@ -92,6 +93,11 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(plan),
     }).then(json<{ ok: boolean }>),
+
+  // Re-runs hook/keyword/emoji generation on the stored transcript, no
+  // Scribe call. A few seconds, so this awaits and returns the plan directly
+  // rather than handing back a job id to poll.
+  enrich: (id: string) => fetch(`/api/projects/${id}/enrich`, { method: "POST" }).then(json<Plan>),
 
   render: (id: string, settings: Record<string, unknown>) =>
     fetch(`/api/projects/${id}/render`, {

@@ -1,19 +1,17 @@
 import { useCallback, useEffect, useState } from "react"
-import { Clapperboard, RefreshCw } from "lucide-react"
+import { Clapperboard, Plus, RefreshCw } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { ScrollArea } from "@/components/ui/scroll-area"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Toaster } from "@/components/ui/sonner"
 import { EditorTab } from "@/components/EditorTab"
-import { PipelineView } from "@/components/PipelineView"
 import { ProjectList } from "@/components/ProjectList"
-import { RenderResult } from "@/components/RenderResult"
 import { SettingsPanel } from "@/components/SettingsPanel"
+import { TaskRail, type RailTab } from "@/components/TaskRail"
 import { UploadCard } from "@/components/UploadCard"
+import { VideoPanel } from "@/components/VideoPanel"
 import { useStream } from "@/lib/useStream"
-import { api, type Project, type ProjectDetail, type Schema } from "@/lib/api"
+import { api, type Project, type ProjectDetail, type Render, type Schema } from "@/lib/api"
 
 export default function App() {
   const [schema, setSchema] = useState<Schema | null>(null)
@@ -21,9 +19,12 @@ export default function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [detail, setDetail] = useState<ProjectDetail | null>(null)
   const [settings, setSettings] = useState<Record<string, boolean | number | string>>({})
+  const [rail, setRail] = useState<RailTab>("style")
+  const [preview, setPreview] = useState<Render | null>(null)
+  const [previewBusy, setPreviewBusy] = useState(false)
 
   const terminal = schema?.terminal_stages ?? []
-  const { events, done } = useStream(selectedId, terminal)
+  const { events, done, restart } = useStream(selectedId, terminal)
 
   const refreshProjects = useCallback(async () => {
     setProjects(await api.projects())
@@ -44,110 +45,127 @@ export default function App() {
   }, [refreshProjects])
 
   // Reload the project whenever the stream settles, so the transcript and the
-  // render list reflect what just finished.
+  // render list reflect what just finished (ingest or a render, either one).
   useEffect(() => {
     void refreshDetail()
   }, [selectedId, done, refreshDetail])
 
+  useEffect(() => {
+    setRail("style")
+    setPreview(null)
+    setPreviewBusy(false)
+  }, [selectedId])
+
+  function startPreview() {
+    restart()
+    setPreview(null)
+    setPreviewBusy(true)
+  }
+
+  function selectProject(id: string) {
+    setSelectedId(id)
+  }
+
+  const styleFields = schema?.fields.filter((f) => f.group === "Subtitr") ?? []
+  const aiFields = schema?.fields.filter((f) => f.group !== "Subtitr") ?? []
+
   return (
     <div className="min-h-svh bg-background text-foreground">
       <header className="border-b">
-        <div className="mx-auto flex max-w-6xl items-center gap-2 px-6 py-4">
-          <Clapperboard className="size-5" />
-          <span className="font-semibold tracking-tight">uzcaption</span>
-          <span className="text-sm text-muted-foreground">
-            o'zbek tilidagi vertikal videolar uchun
-          </span>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="ml-auto"
-            onClick={() => void refreshProjects()}
-          >
-            <RefreshCw className="size-4" />
-            Yangilash
-          </Button>
+        <div className="mx-auto flex max-w-6xl items-center gap-3 px-6 py-4">
+          <Clapperboard className="size-5 shrink-0" />
+          <span className="shrink-0 font-semibold tracking-tight">uzcaption</span>
+
+          {selectedId && projects.length > 0 && (
+            <Select value={selectedId} onValueChange={selectProject}>
+              <SelectTrigger className="ml-2 w-56">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {projects.map((p) => (
+                  <SelectItem key={p.id} value={p.id}>
+                    {p.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+
+          <div className="ml-auto flex items-center gap-2">
+            {selectedId && (
+              <Button variant="outline" size="sm" onClick={() => setSelectedId(null)}>
+                <Plus className="size-4" />
+                Yangi video
+              </Button>
+            )}
+            <Button variant="ghost" size="sm" onClick={() => void refreshProjects()}>
+              <RefreshCw className="size-4" />
+              Yangilash
+            </Button>
+          </div>
         </div>
       </header>
 
-      <main className="mx-auto grid max-w-6xl gap-6 px-6 py-6 lg:grid-cols-[280px_1fr]">
-        <aside className="space-y-3">
-          <h2 className="px-3 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-            Loyihalar
-          </h2>
-          <ScrollArea className="h-[60svh] pr-2">
-            <ProjectList
-              projects={projects}
-              selectedId={selectedId}
-              onSelect={setSelectedId}
+      <main className="mx-auto max-w-6xl px-6 py-6">
+        {!selectedId ? (
+          <div className="mx-auto max-w-lg space-y-8">
+            <UploadCard onUploaded={selectProject} />
+            {projects.length > 0 && (
+              <div>
+                <h2 className="mb-2 px-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                  So'nggi loyihalar
+                </h2>
+                <ProjectList projects={projects} selectedId={null} onSelect={selectProject} />
+              </div>
+            )}
+          </div>
+        ) : !schema || !detail ? (
+          <p className="text-sm text-muted-foreground">Yuklanmoqda…</p>
+        ) : (
+          <div className="grid gap-6 lg:grid-cols-[160px_1fr_320px]">
+            <TaskRail active={rail} onChange={setRail} />
+
+            <div className="min-w-0">
+              {rail === "style" && (
+                <SettingsPanel fields={styleFields} values={settings} onChange={setSettings} />
+              )}
+              {rail === "ai" && (
+                <SettingsPanel fields={aiFields} values={settings} onChange={setSettings} />
+              )}
+              {rail === "captions" &&
+                (detail.plan ? (
+                  <EditorTab
+                    key={selectedId}
+                    projectId={selectedId}
+                    plan={detail.plan}
+                    settings={settings}
+                    onSaved={(plan) => setDetail((d) => (d ? { ...d, plan } : d))}
+                    previewBusy={previewBusy}
+                    onPreviewStart={startPreview}
+                    onPreviewResult={(r) => {
+                      setPreview(r)
+                      setPreviewBusy(false)
+                    }}
+                  />
+                ) : (
+                  <p className="text-sm text-muted-foreground">
+                    Tahlil hali tugamadi — reja tayyor bo'lgach so'zlarni bu yerda tahrirlaysiz.
+                  </p>
+                ))}
+            </div>
+
+            <VideoPanel
+              stages={schema.stages}
+              events={events}
+              projectId={selectedId}
+              settings={settings}
+              renders={detail.renders}
+              preview={preview}
+              previewBusy={previewBusy}
+              onBeforeAction={restart}
             />
-          </ScrollArea>
-        </aside>
-
-        <section className="space-y-6">
-          <UploadCard
-            onUploaded={(id) => {
-              setSelectedId(id)
-              void refreshProjects()
-            }}
-          />
-
-          {selectedId && schema && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">
-                  {detail?.name ?? "Loyiha"}
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <Tabs defaultValue="progress">
-                  <TabsList className="grid w-full grid-cols-4">
-                    <TabsTrigger value="progress">Jarayon</TabsTrigger>
-                    <TabsTrigger value="sozlamalar">Sozlamalar</TabsTrigger>
-                    <TabsTrigger value="natija">Natija</TabsTrigger>
-                    <TabsTrigger value="transkript">Transkript</TabsTrigger>
-                  </TabsList>
-
-                  <TabsContent value="progress" className="pt-4">
-                    <PipelineView stages={schema.stages} events={events} />
-                  </TabsContent>
-
-                  <TabsContent value="sozlamalar" className="pt-4">
-                    <SettingsPanel
-                      schema={schema}
-                      projectId={selectedId}
-                      values={settings}
-                      onChange={setSettings}
-                      onRender={() => void refreshDetail()}
-                    />
-                  </TabsContent>
-
-                  <TabsContent value="natija" className="pt-4">
-                    {detail ? (
-                      <RenderResult renders={detail.renders} />
-                    ) : (
-                      <p className="text-sm text-muted-foreground">Yuklanmoqda…</p>
-                    )}
-                  </TabsContent>
-
-                  <TabsContent value="transkript" className="pt-4">
-                    {detail?.plan && (
-                      <EditorTab
-                        key={selectedId}
-                        projectId={selectedId}
-                        plan={detail.plan}
-                        settings={settings}
-                        onSaved={(plan) =>
-                          setDetail((d) => (d ? { ...d, plan } : d))
-                        }
-                      />
-                    )}
-                  </TabsContent>
-                </Tabs>
-              </CardContent>
-            </Card>
-          )}
-        </section>
+          </div>
+        )}
       </main>
       <Toaster richColors />
     </div>

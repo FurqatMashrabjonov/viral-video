@@ -1,28 +1,23 @@
-import { useState } from "react"
-import { Play } from "lucide-react"
-import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Separator } from "@/components/ui/separator"
 import { Slider } from "@/components/ui/slider"
 import { Switch } from "@/components/ui/switch"
-import { api, type Field, type Render, type Schema } from "@/lib/api"
+import type { Field } from "@/lib/api"
 
 type Values = Record<string, boolean | number | string>
 
 type Props = {
-  schema: Schema
-  projectId: string
+  fields: Field[]
   values: Values
   onChange: (values: Values) => void
-  onRender: (render: Render) => void
 }
 
-export function SettingsPanel({ schema, projectId, values, onChange, onRender }: Props) {
-  const [busy, setBusy] = useState(false)
-
+/** Pure field editor -- fieldset per settings.py group, no render trigger of its
+ * own. The caller decides which groups to show (task rail splits them across
+ * tabs) and when to fire a render. */
+export function SettingsPanel({ fields, values, onChange }: Props) {
   const groups: [string, Field[]][] = []
-  for (const field of schema.fields) {
+  for (const field of fields) {
     const group = groups.find(([name]) => name === field.group)
     if (group) group[1].push(field)
     else groups.push([field.group, [field]])
@@ -32,25 +27,15 @@ export function SettingsPanel({ schema, projectId, values, onChange, onRender }:
     onChange({ ...values, [key]: value })
   }
 
-  async function renderNow() {
-    setBusy(true)
-    try {
-      const { render_id } = await api.render(projectId, values)
-      onRender({ id: render_id, settings: values } as Render)
-    } finally {
-      setBusy(false)
-    }
-  }
-
   return (
     <div className="space-y-6">
-      {groups.map(([group, fields]) => (
+      {groups.map(([group, groupFields]) => (
         <fieldset key={group}>
           <legend className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
             {group}
           </legend>
           <div className="mt-2 space-y-4">
-            {fields.map((f) => {
+            {groupFields.map((f) => {
               const parent = f.depends_on
               const disabled = parent ? !values[parent] : false
 
@@ -88,9 +73,7 @@ export function SettingsPanel({ schema, projectId, values, onChange, onRender }:
                           (disabled ? "text-muted-foreground/50" : "text-muted-foreground")
                         }
                       >
-                        {Number(values[f.key]).toFixed(
-                          (f.step ?? 1) < 1 ? 2 : 0,
-                        )}
+                        {Number(values[f.key]).toFixed((f.step ?? 1) < 1 ? 2 : 0)}
                       </span>
                     </div>
                   )}
@@ -119,16 +102,6 @@ export function SettingsPanel({ schema, projectId, values, onChange, onRender }:
           </div>
         </fieldset>
       ))}
-
-      <Separator />
-
-      <Button onClick={() => void renderNow()} disabled={busy} className="w-full">
-        <Play className="size-4" />
-        {busy ? "Render boshlanmoqda…" : "Render qilish"}
-      </Button>
-      <p className="text-xs text-muted-foreground">
-        Render faqat CPU sarflaydi — transkripsiya qayta ishlamaydi.
-      </p>
     </div>
   )
 }

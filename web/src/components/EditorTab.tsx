@@ -16,16 +16,21 @@ type Props = {
   plan: Plan
   settings: Record<string, unknown>
   onSaved: (plan: Plan) => void
+  // The preview video lives in the always-visible video panel, not here --
+  // this tab only triggers it and reports progress up.
+  previewBusy: boolean
+  onPreviewStart: () => void
+  onPreviewResult: (render: Render | null) => void
 }
 
-export function EditorTab({ projectId, plan, settings, onSaved }: Props) {
+export function EditorTab({
+  projectId, plan, settings, onSaved, previewBusy, onPreviewStart, onPreviewResult,
+}: Props) {
   const [words, setWords] = useState<Word[]>(plan.words)
   const [hook, setHook] = useState(plan.hook?.text ?? "")
   const [selected, setSelected] = useState<number | null>(null)
   const [editing, setEditing] = useState<number | null>(null)
   const [dirty, setDirty] = useState(false)
-  const [preview, setPreview] = useState<Render | null>(null)
-  const [previewBusy, setPreviewBusy] = useState(false)
   const [enriching, setEnriching] = useState(false)
 
   async function reEnrich() {
@@ -56,8 +61,7 @@ export function EditorTab({ projectId, plan, settings, onSaved }: Props) {
   async function previewAround() {
     if (selected === null) return
     const word = words[selected]
-    setPreviewBusy(true)
-    setPreview(null)
+    onPreviewStart()
     try {
       const t0 = Math.max(0, word.start - PREVIEW_BEFORE)
       const t1 = word.start + PREVIEW_AFTER
@@ -68,10 +72,11 @@ export function EditorTab({ projectId, plan, settings, onSaved }: Props) {
         await new Promise((r) => setTimeout(r, 500))
         row = await api.renderStatus(render_id)
       }
-      setPreview(row)
+      onPreviewResult(row)
       if (row?.status !== "done") toast.error("Oldindan ko'rish chiqmadi")
-    } finally {
-      setPreviewBusy(false)
+    } catch (e) {
+      onPreviewResult(null)
+      toast.error(e instanceof Error ? e.message : "Oldindan ko'rish chiqmadi")
     }
   }
 
@@ -190,25 +195,9 @@ export function EditorTab({ projectId, plan, settings, onSaved }: Props) {
         yangi emoji tanlaydi. Scribe'ga bormaydi, faqat eski loyihalarda hook/emoji bo'lmasa
         yoki qayta urinib ko'rmoqchi bo'lsangiz ishlatiladi.
       </p>
-
-      {preview?.status === "done" && (
-        <video
-          key={preview.id}
-          src={api.videoUrl(preview.id)}
-          controls
-          autoPlay
-          playsInline
-          className="aspect-9/16 w-full max-w-xs rounded-lg border bg-black"
-        />
-      )}
-
-      {preview?.status === "error" && (
-        <p className="text-sm text-destructive">{preview.error}</p>
-      )}
-
       <p className="text-xs text-muted-foreground">
-        Oldindan ko'rish tanlangan so'z atrofidagi 5 soniyani xuddi yakuniy
-        video qanday chiqsa shunday render qiladi — taxminiy ko'rinish emas.
+        Oldindan ko'rish tanlangan so'z atrofidagi 5 soniyani xuddi yakuniy video
+        qanday chiqsa shunday render qiladi — natija o'ng paneldagi videoda ko'rinadi.
       </p>
     </div>
   )

@@ -10,9 +10,14 @@ const STATUS: Record<Render["status"], { label: string; variant: "default" | "se
   error: { label: "xato", variant: "destructive" },
 }
 
-type Props = { renders: Render[] }
+type Props = {
+  renders: Render[]
+  // The always-visible video panel already shows the latest render; a caller
+  // embedding this as a history list underneath sets this to skip repeating it.
+  showLatest?: boolean
+}
 
-export function RenderResult({ renders }: Props) {
+export function RenderResult({ renders, showLatest = true }: Props) {
   if (renders.length === 0) {
     return (
       <p className="text-sm text-muted-foreground">
@@ -26,7 +31,7 @@ export function RenderResult({ renders }: Props) {
 
   return (
     <div className="space-y-4">
-      {latest.status === "done" && (
+      {showLatest && latest.status === "done" && (
         <video
           key={latest.id}
           src={api.videoUrl(latest.id)}
@@ -36,10 +41,10 @@ export function RenderResult({ renders }: Props) {
         />
       )}
 
-      {latest.status !== "done" && latest.status !== "error" && (
+      {showLatest && latest.status !== "done" && latest.status !== "error" && (
         <p className="text-sm text-muted-foreground">Render davom etmoqda…</p>
       )}
-      {latest.status === "error" && (
+      {showLatest && latest.status === "error" && (
         <p className="text-sm text-destructive">{latest.error ?? "Render xato bilan tugadi"}</p>
       )}
 

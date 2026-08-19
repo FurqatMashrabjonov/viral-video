@@ -3,7 +3,7 @@ services:
     build: .
     ports:
       - "8000:8000"
-    env_file: .env            # ELEVENLABS_API_KEY, GEMINI_API_KEY
+    env_file: .env            # ELEVENLABS_API_KEY, GEMINI_API_KEY, PEXELS_API_KEY
     volumes:
       - data:/app/data        # sqlite + uploaded and rendered media
     restart: unless-stopped

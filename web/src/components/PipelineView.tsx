@@ -12,13 +12,14 @@ export const STAGE_LABELS: Record<string, string> = {
   enrich: "Hook va kalit so'zlar",
   ready: "Tahlil tayyor",
   subtitles: "Subtitr qurilmoqda",
+  broll: "B-roll qidirilmoqda",
   render: "Render",
   done: "Tayyor",
 }
 
 // The slow ones. Everything else is over in well under a second, so a spinner
 // on them would only flicker.
-const SLOW = new Set(["transcribe", "enrich", "render"])
+const SLOW = new Set(["transcribe", "enrich", "broll", "render"])
 
 type Props = { stages: string[]; events: StageEvent[]; className?: string }
 

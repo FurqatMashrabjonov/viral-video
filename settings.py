@@ -68,6 +68,12 @@ def _fields() -> list[dict]:
         {"key": "audio_cleanup", "group": "Audio", "label": "Audio tozalash", "type": "bool", "default": True},
         {"key": "target_lufs", "group": "Audio", "label": "Balandlik (LUFS)", "type": "number",
          "default": -16.0, "min": -24.0, "max": -9.0, "step": 0.5},
+
+        # --- b-roll --- off by default: real quality risk (query translation,
+        # clip relevance) that the user should opt into, not get by surprise
+        {"key": "broll", "group": "B-roll", "label": "B-roll (Pexels)", "type": "bool", "default": False},
+        {"key": "broll_max_per_min", "group": "B-roll", "label": "Daqiqasiga eng ko'pi", "type": "number",
+         "default": 2.5, "min": 0.5, "max": 5.0, "step": 0.5, "depends_on": "broll"},
     ]
 
 

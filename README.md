@@ -22,13 +22,16 @@ ffmpeg -version | grep libass   # tekshirish
 ```
 ELEVENLABS_API_KEY=your-key-here
 GEMINI_API_KEY=your-key-here
+PEXELS_API_KEY=your-key-here
 ```
 
 `.env.example` ga qarang. `.env` gitga commit qilinmaydi (`.gitignore` da bor).
 
 `ELEVENLABS_API_KEY` majburiy (transkripsiya). `GEMINI_API_KEY` ixtiyoriy — usiz
 `analyze.py` heuristika rejimida ishlaydi (kesim, zoom, raqam-kalit so'zlar), faqat
-hook sarlavha va semantik kalit so'zlar chiqmaydi.
+hook sarlavha, semantik kalit so'zlar va B-roll so'rovlari chiqmaydi.
+`PEXELS_API_KEY` faqat B-roll sozlamasi yoqilganda kerak (standart — o'chiq),
+[pexels.com/api](https://www.pexels.com/api/) dan bepul olinadi.
 
 ## CLI orqali ishlatish
 
@@ -214,13 +217,39 @@ Effektlar `analyze.py` belgilagan kalit so'zlarga tushadi: raqamga `ding`,
 qolganiga `pop`, kamida 1.5 soniya oraliq bilan. Miks darajasi
 `enhance.SFX_VOLUME` (standart 0.35). O'chirish: `run_pipeline(..., sfx=False)`.
 
+## B-roll (`pexels.py`)
+
+Standart **o'chiq** — sifat riski borligi sababli (foydalanuvchi ongli
+ravishda yoqadi, `settings.broll`).
+
+Gemini transkriptdagi aniq, ko'rgazmali tushunchalarni (masalan "ofisda
+uchrashuv", "mashinada shahar bo'ylab") topib, har biriga inglizcha 1-3 so'zlik
+qidiruv so'rovi yozadi (`broll_spans`). Render paytida `pexels.py` shu so'rov
+bilan Pexels'dan klip qidiradi, eng yaqin aspekt nisbatli va 800px dan
+past renditsiyani tanlaydi (2-3 soniyalik overlay uchun 4K shart emas), va
+video ustiga **PiP** sifatida qo'yadi — kadr balandligining yuqori 58% qismida,
+pastda prezenter va subtitr zonasi ochiq qoladi. Hech qachon to'liq ekran emas.
+
+B-roll'ga asosiy videoning **o'zi LUT'i, o'zi kuchida** qo'llaniladi — rang
+mos kelishi uchun. Ko'rsatish davomiyligi qat'iy qisqa (`BROLL_DISPLAY_SECONDS`,
+standart 1.6s) — zoom'dan farqli, gap davomiyligiga cho'zilmaydi, chunki bu
+tez urg'u ("flash"), diqqatni tortish emas. Soni video uzunligiga qarab
+cheklanadi (`broll_max_per_min`, standart 2.5/daqiqa).
+
+Ikki qatlamli kesh: qidiruv natijasi (`data/broll_cache/search_*.json`,
+24 soat TTL) va yuklangan fayl (`data/broll_cache/clip_*.mp4`, muddatsiz,
+URL xeshi bilan) — bir xil so'rov qayta render'da qayta yuklanmaydi.
+Pexels topilmasa yoki API xato bersa, o'sha B-roll jimgina o'tkazib
+yuboriladi — butun render yiqilmaydi.
+
 ## Testlar
 
 ```bash
 .venv/bin/python test_normalize.py        # apostrof/kod-almashish testlari
 .venv/bin/python test_analyze.py          # kesim, vaqt remap, zoom oraliq
 .venv/bin/python test_subtitles.py        # kalit so'z teglari, hook
-.venv/bin/python test_enhance.py          # zoom ifodasi, sfx audio grafi
+.venv/bin/python test_enhance.py          # zoom ifodasi, sfx audio grafi, broll PiP grafi
+.venv/bin/python test_pexels.py           # renditsiya tanlash, kesh yo'llari (tarmoqsiz)
 .venv/bin/python test_settings.py         # sxema butunligi, qiymat validatsiyasi
 .venv/bin/python test_events.py           # hodisa jurnali, SSE qayta ulanish
 .venv/bin/python test_pipeline_smoke.py   # 5s sintetik klip, Scribe mock qilingan
@@ -260,5 +289,4 @@ SQLite va media `data` nomli hajmda — konteyner qayta qurilsa ham saqlanadi.
   (`cut_silence=True`) va vaqt remap testlar bilan qoplangan, lekin render
   ularni qo'llamaydi va pipeline'da o'chiq.
 
-**Hali qurilmagan:** to'lov (Payme/Click), GPT-4o fallback, B-roll (Pexels),
-emoji avtomatik qo'yish.
+**Hali qurilmagan:** to'lov (Payme/Click), GPT-4o fallback.

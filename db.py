@@ -71,7 +71,7 @@ CREATE INDEX IF NOT EXISTS events_by_project ON events(project_id, id);
 # Stages a client can expect, in order. The slow ones are worth a percentage;
 # the rest are over in well under a second.
 STAGES = ["probe", "audio", "transcribe", "plan", "enrich", "ready",
-          "subtitles", "render", "done"]
+          "subtitles", "broll", "render", "done"]
 
 # Stages that end a stream. "ready" is not one of them: it closes ingest, but a
 # render follows on the same project and the client wants to keep watching.

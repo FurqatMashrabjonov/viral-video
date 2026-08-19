@@ -9,8 +9,10 @@ from analyze import (
     mark_keywords,
     mark_low_confidence,
     zooms_from_spans,
+    plan_broll,
     build_edit_plan,
     _looks_like_one_emoji,
+    _looks_like_a_query,
     _resolve_span_times,
 )
 
@@ -204,6 +206,59 @@ def test_word_answers_are_rejected():
 def test_empty_and_missing_are_rejected():
     assert not _looks_like_one_emoji("")
     assert not _looks_like_one_emoji(None)
+
+
+# --- B-roll -----------------------------------------------------------------
+
+def test_query_validator_rejects_empty_and_oversized():
+    assert _looks_like_a_query("office meeting")
+    assert not _looks_like_a_query("")
+    assert not _looks_like_a_query("   ")
+    assert not _looks_like_a_query("x" * 41)
+    assert not _looks_like_a_query(None)
+    assert not _looks_like_a_query(123)
+
+
+def test_broll_display_window_is_fixed_short_not_the_span_length():
+    """Unlike a zoom, a cutaway is a flash -- it must not stretch to cover
+    however long the sentence about it happens to run."""
+    spans = [{"start": 2.0, "end": 9.0, "query": "office meeting"}]  # a 7s-long span
+    clips = plan_broll(spans, video_duration=60.0, display_seconds=1.6)
+    assert clips[0]["end"] - clips[0]["start"] == 1.6
+
+
+def test_broll_count_is_capped_by_video_length():
+    spans = [{"start": i * 12.0, "end": i * 12.0 + 1.0, "query": f"q{i}"} for i in range(6)]
+    clips = plan_broll(spans, video_duration=60.0, spacing=1.0, max_per_minute=2.5)
+    assert len(clips) == 3, "60s at 2.5/min should cap at 3, not fit all 6 candidates"
+
+
+def test_broll_rounding_does_not_silently_drop_a_short_clip():
+    """int(x + 0.5) rounds half up; round() rounds half-to-even and would
+    zero out a duration that lands exactly on a .5 boundary (12s @ 2.5/min)."""
+    spans = [{"start": 2.0, "end": 3.0, "query": "q"}]
+    clips = plan_broll(spans, video_duration=12.0, max_per_minute=2.5)
+    assert len(clips) == 1
+
+
+def test_broll_respects_minimum_spacing():
+    spans = [{"start": t, "end": t + 1.0, "query": "q"} for t in [0.0, 2.0, 20.0]]
+    clips = plan_broll(spans, video_duration=90.0, spacing=8.0, max_per_minute=5.0)
+    starts = [c["start"] for c in clips]
+    assert 2.0 not in starts, "too close to the first clip, must be skipped"
+    assert 0.0 in starts and 20.0 in starts
+
+
+def test_broll_skips_a_clip_too_close_to_video_end():
+    spans = [{"start": 11.8, "end": 11.9, "query": "q"}]
+    clips = plan_broll(spans, video_duration=12.0, display_seconds=1.6)
+    assert clips == []
+
+
+def test_broll_carries_its_query_through():
+    spans = [{"start": 2.0, "end": 3.0, "query": "car driving"}]
+    clips = plan_broll(spans, video_duration=60.0)
+    assert clips[0]["query"] == "car driving"
 
 
 if __name__ == "__main__":

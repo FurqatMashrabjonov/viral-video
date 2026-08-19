@@ -99,9 +99,45 @@ def build_zoom_filter(zooms: list[dict], width: int, height: int, fps: float) ->
     )
 
 
+BROLL_HEIGHT_FRACTION = 0.58  # leaves the lower-middle third, where captions live, clear
+
+
+def build_broll_filter(broll: list[dict], broll_inputs: dict, width: int, height: int,
+                       lut_path: str, lut_strength: float, source_label: str) -> str:
+    """One PiP overlay per clip, chained onto `source_label`, each gated to its
+    own time window. Returns a graph fragment ending in [pip].
+
+    Every clip gets the SAME LUT at the SAME strength as the presenter frame,
+    graded exactly like the main picture's own grade step (split, lut3d,
+    blend) -- an ungraded insert would read as visibly colder/flatter than
+    everything around it. Height is capped well short of the full frame on
+    purpose: the backlog spec is explicit that this is a partial overlay, the
+    presenter stays visible, and it never goes full-screen.
+    """
+    if not broll or not broll_inputs:
+        return f"[{source_label}]copy[pip]"
+
+    br_h = round(height * BROLL_HEIGHT_FRACTION)
+    parts = []
+    current = source_label
+    for i, clip in enumerate(broll):
+        idx = broll_inputs[i]
+        out = f"pip{i}"
+        parts.append(
+            f"[{idx}:v]scale={width}:{br_h},setsar=1[br{i}raw]"
+            f";[br{i}raw]split=2[br{i}o][br{i}f]"
+            f";[br{i}f]lut3d=file='{lut_path}'[br{i}g]"
+            f";[br{i}o][br{i}g]blend=all_mode=normal:all_opacity={lut_strength}[br{i}]"
+            f";[{current}][br{i}]overlay=x=0:y=0:enable='between(t,{clip['start']},{clip['end']})'[{out}]"
+        )
+        current = out
+    parts.append(f"[{current}]copy[pip]")
+    return ";".join(parts)
+
+
 def build_video_filter(eq: dict, lut_path: str, ass_path: str | None, zoom: str = "",
                        lut_strength: float = LUT_OPACITY, denoise: bool = True,
-                       vignette: bool = True, grade: bool = True) -> str:
+                       vignette: bool = True, grade: bool = True, broll_graph: str = "") -> str:
     head = "hqdn3d=2:1.5:3:3," if denoise else ""
     graph = (
         f"[0:v]{head}eq=brightness={eq['brightness']}:contrast={eq['contrast']}[eqd]"
@@ -116,11 +152,12 @@ def build_video_filter(eq: dict, lut_path: str, ass_path: str | None, zoom: str 
     else:
         graph += ";[eqd]copy[blended]"
 
-    # Zoom sits after the grade but before the vignette and the captions: the
-    # vignette belongs to the frame edge, and captions must not scale with the
-    # picture.
+    # Zoom sits after the grade but before B-roll: a punch-in must not also
+    # scale/crop the PiP window, so B-roll composites onto the already-zoomed
+    # frame. Vignette and captions come last, over the final composited picture.
     graph += f";[blended]{zoom}[zoomed]" if zoom else ";[blended]copy[zoomed]"
-    graph += ";[zoomed]vignette=PI/6[v_graded]" if vignette else ";[zoomed]copy[v_graded]"
+    graph += ";" + (broll_graph or "[zoomed]copy[pip]")
+    graph += ";[pip]vignette=PI/6[v_graded]" if vignette else ";[pip]copy[v_graded]"
 
     if ass_path:
         graph += f";[v_graded]ass='{ass_path}':fontsdir='{FONTS_DIR}'[vout]"
@@ -199,13 +236,16 @@ def enhance(input_path: str, output_path: str, lut_path: str = DEFAULT_LUT, ass_
             lut_strength: float = LUT_OPACITY, denoise: bool = True, vignette: bool = True,
             grade: bool = True, sfx_volume: float = SFX_VOLUME, target_lufs: float = -16.0,
             audio_cleanup: bool = True, seek_start: float | None = None,
-            seek_duration: float | None = None):
+            seek_duration: float | None = None, broll: list[dict] | None = None):
+    """broll entries are {"start", "end", "path"} -- path already resolved to a
+    local file (pexels.fetch_clip, called by the caller) so this module stays
+    ffmpeg-only and never touches the network."""
     mean_luma = measure_mean_luma(input_path)
     eq = adaptive_eq_params(mean_luma)
+    w, h = get_video_dims(input_path)
 
     zoom = ""
     if zooms:
-        w, h = get_video_dims(input_path)
         zoom = build_zoom_filter(zooms, w, h, get_fps(input_path))
 
     # One -i per distinct effect file; asplit fans it out to each hit.
@@ -219,12 +259,26 @@ def enhance(input_path: str, output_path: str, lut_path: str = DEFAULT_LUT, ass_
         sfx_inputs[name] = len(sfx_inputs) + 1
         sfx_args += ["-i", str(path)]
     usable = [e for e in (sfx or []) if e["name"] in sfx_inputs]
-    print(f"[enhance] mean luma={mean_luma:.1f} -> eq={eq}, "
-          f"{len(zooms or [])} zooms, {len(usable)} sfx")
 
+    # B-roll inputs come after sfx inputs in argv, so their stream index has to
+    # start counting from there, not from 1.
+    broll_args, broll_inputs, usable_broll = [], {}, []
+    for clip in broll or []:
+        path = clip.get("path")
+        if not path or not Path(path).exists():
+            print(f"[enhance] missing broll clip {path}, skipping it")
+            continue
+        broll_inputs[len(usable_broll)] = 1 + len(sfx_inputs) + len(usable_broll)
+        broll_args += ["-i", path]
+        usable_broll.append(clip)
+
+    print(f"[enhance] mean luma={mean_luma:.1f} -> eq={eq}, "
+          f"{len(zooms or [])} zooms, {len(usable)} sfx, {len(usable_broll)} broll")
+
+    broll_graph = build_broll_filter(usable_broll, broll_inputs, w, h, lut_path, lut_strength, "zoomed")
     filter_complex = (
         build_video_filter(eq, lut_path, ass_path, zoom, lut_strength=lut_strength,
-                           denoise=denoise, vignette=vignette, grade=grade)
+                           denoise=denoise, vignette=vignette, grade=grade, broll_graph=broll_graph)
         + ";"
         + build_audio_filter(usable, sfx_inputs, volume=sfx_volume,
                              target_lufs=target_lufs, cleanup=audio_cleanup)
@@ -238,7 +292,7 @@ def enhance(input_path: str, output_path: str, lut_path: str = DEFAULT_LUT, ass_
     if seek_duration is not None:
         seek_args += ["-t", f"{seek_duration:.3f}"]
     cmd = [
-        "ffmpeg", "-y", *seek_args, "-i", input_path, *sfx_args,
+        "ffmpeg", "-y", *seek_args, "-i", input_path, *sfx_args, *broll_args,
         "-filter_complex", filter_complex,
         "-map", "[vout]", "-map", "[aout]",
         "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac",

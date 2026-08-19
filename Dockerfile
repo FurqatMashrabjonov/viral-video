@@ -23,7 +23,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY --from=web /static/app /app/static/app
 COPY api.py db.py pipeline.py enhance.py analyze.py normalize.py subtitles.py \
-     scribe.py settings.py cost.py ./
+     scribe.py settings.py cost.py pexels.py ./
 COPY fonts fonts
 COPY luts luts
 COPY sfx sfx

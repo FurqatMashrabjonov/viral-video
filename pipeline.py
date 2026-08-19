@@ -18,7 +18,8 @@ from scribe import transcribe, COST_PER_MINUTE_USD
 from normalize import normalize_words
 from subtitles import build_ass, load_style
 from enhance import enhance, get_video_dims, get_duration, get_fps
-from analyze import build_edit_plan, llm_enrich, zooms_from_spans, plan_sfx
+from analyze import build_edit_plan, llm_enrich, zooms_from_spans, plan_sfx, plan_broll
+from pexels import fetch_clip
 from cost import log_cost
 from settings import merge as merge_settings, defaults as default_settings
 
@@ -181,9 +182,11 @@ def render(project_id: str, settings: dict | None = None, progress_cb=None,
         words = plan["words"]
         hook = plan.get("hook")
         spans = plan.get("emphasis_spans", [])
-        t0 = 0.0
+        broll_spans = plan.get("broll_spans", [])
+        t0, seg_duration = 0.0, project["duration"]
         if segment:
             t0, t1 = segment
+            seg_duration = t1 - t0
             words = [w for w in words if w["end"] > t0 and w["start"] < t1]
             words = [{**w, "start": round(w["start"] - t0, 3),
                       "end": round(w["end"] - t0, 3)} for w in words]
@@ -194,6 +197,10 @@ def render(project_id: str, settings: dict | None = None, progress_cb=None,
             spans = [
                 {"start": round(max(0.0, s["start"] - t0), 3), "end": round(min(s["end"], t1) - t0, 3)}
                 for s in spans if s["end"] > t0 and s["start"] < t1
+            ]
+            broll_spans = [
+                {**s, "start": round(max(0.0, s["start"] - t0), 3), "end": round(min(s["end"], t1) - t0, 3)}
+                for s in broll_spans if s["end"] > t0 and s["start"] < t1
             ]
 
         if settings["captions"]:
@@ -220,6 +227,21 @@ def render(project_id: str, settings: dict | None = None, progress_cb=None,
                                      min_duration=settings["zoom_duration"], scale=settings["zoom_scale"])
         if settings["sfx"]:
             sfx = plan_sfx(words, min_spacing=settings["sfx_spacing"])
+
+        # Fetching happens at render time, not stored in the plan: the query
+        # is fixed at ingest, but which clip that query resolves to, and
+        # whether it survives the current spacing/cap settings, can change
+        # per render. pexels.fetch_clip caches both the search and the
+        # download, so a re-render with the same query is nearly free.
+        broll = None
+        if settings["broll"] and broll_spans:
+            stage("broll")
+            clips = plan_broll(broll_spans, seg_duration, max_per_minute=settings["broll_max_per_min"])
+            broll = []
+            for clip in clips:
+                path = fetch_clip(clip["query"])
+                if path:
+                    broll.append({"start": clip["start"], "end": clip["end"], "path": path})
 
         stage("render")
 
@@ -248,6 +270,7 @@ def render(project_id: str, settings: dict | None = None, progress_cb=None,
             progress_cb=report,
             zooms=zooms,
             sfx=sfx,
+            broll=broll,
             seek_start=t0 if segment else None,
             seek_duration=round(t1 - t0, 3) if segment else None,
             lut_strength=settings["lut_strength"],

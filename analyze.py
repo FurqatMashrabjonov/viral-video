@@ -19,6 +19,10 @@ MIN_ZOOM_DURATION = 0.6     # floor so a short phrase still clears the ~0.22s ra
 ZOOM_SCALE = 1.15
 HOOK_END = 3.0
 LOW_CONFIDENCE_LOGPROB = -1.0  # below this, Scribe was guessing -- flag for review
+BROLL_MAX_PER_MINUTE = 2.5     # backlog spec: "never more than 2-3 per minute"
+BROLL_DISPLAY_SECONDS = 1.6    # a flash cutaway, not a hold -- unlike a zoom span,
+                                # this does not stretch to the phrase's own length
+BROLL_MIN_SPACING = 8.0        # research: overusing B-roll reads as noisy, not lively
 
 _HAS_DIGIT = re.compile(r"\d")
 
@@ -136,6 +140,8 @@ def build_edit_plan(words: list[dict], source_duration: float, cut_silence: bool
         "words": new_words,
         "emphasis_spans": [],  # filled by llm_enrich() -- heuristics can't judge what a sentence means
         "zooms": [],
+        "broll_spans": [],
+        "broll": [],
         "sfx": plan_sfx(new_words),
         "hook": None,  # filled by llm_enrich()
     }
@@ -168,7 +174,18 @@ Uchta narsa qaytar:
    - start_index / end_index — transkriptdagi so'z raqamlari (ikkalasi ham kiritiladi)
    - HAR BIR span kamida 2 ta so'zdan iborat bo'lsin — bitta so'z hech qachon emas
    - butun video uchun 2 tadan 4 tagacha, ko'proq emas — faqat haqiqatan asosiy
-     xulosa, natija yoki da'vo bo'lgan gaplarni tanla, har jumlaga emas"""
+     xulosa, natija yoki da'vo bo'lgan gaplarni tanla, har jumlaga emas
+
+4. broll_spans — gapda KONKRET, KO'RGAZMALI narsa tasvirlangan joylar (masalan
+   "avtomobil", "ofisda uchrashuv", "pul sanash") — bir soniyalik stok video
+   bilan ko'rsatilishi mumkin bo'lgan tushunchalar.
+   - start_index / end_index — o'sha tushuncha aytilgan so'zlar oralig'i
+   - query_en — Pexels’dan qidirish uchun INGLIZCHA 1-3 so'zlik so'rov
+     (masalan "car driving", "office meeting", "counting money")
+   - mavhum yoki hissiy gaplarga (masalan his-tuyg'u, xulosa) broll bermang —
+     faqat aniq, jismoniy tasvirlanadigan narsalarga
+   - daqiqasiga 2 tadan oshmasin, hammasiga emas — eng ko'zga ko'rinadigan
+     2-3 tasini tanla"""
 
 _ENRICH_SCHEMA = {
     "type": "object",
@@ -196,9 +213,59 @@ _ENRICH_SCHEMA = {
                 "required": ["start_index", "end_index"],
             },
         },
+        "broll_spans": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "start_index": {"type": "integer"},
+                    "end_index": {"type": "integer"},
+                    "query_en": {"type": "string"},
+                },
+                "required": ["start_index", "end_index", "query_en"],
+            },
+        },
     },
-    "required": ["hook", "keywords", "emphasis_spans"],
+    "required": ["hook", "keywords", "emphasis_spans", "broll_spans"],
 }
+
+
+def _looks_like_a_query(s) -> bool:
+    """Reject an empty, absurdly long, or non-string answer -- the schema
+    requires the field, but a required string field can still be ''.  Loanwords
+    and place names can be non-ASCII, so this only bounds length, it doesn't
+    demand pure ASCII."""
+    return isinstance(s, str) and 0 < len(s.strip()) <= 40
+
+
+def plan_broll(spans: list[dict], video_duration: float, spacing: float = BROLL_MIN_SPACING,
+               display_seconds: float = BROLL_DISPLAY_SECONDS,
+               max_per_minute: float = BROLL_MAX_PER_MINUTE) -> list[dict]:
+    """Turn resolved {start, end, query} spans into short, spaced-out flashes.
+
+    Two things distinguish this from zooms_from_spans: the display window is a
+    fixed short duration anchored at the span's own start rather than
+    stretched to cover the phrase (a cutaway is a flash, not a hold), and the
+    whole list is capped by video length -- a 90s clip earning the same 2-3
+    inserts as a 20s one would read as noisy, not lively.
+    """
+    # round(), not int(x+0.5): Python's round() rounds half-to-even, so a
+    # duration landing exactly on a .5 boundary (e.g. 12s at 2.5/min -> 0.5)
+    # would silently round down to 0 half the time.
+    cap = max(0, int(video_duration / 60 * max_per_minute + 0.5))
+    clips, last_end = [], float("-inf")
+    for span in sorted(spans, key=lambda s: s["start"]):
+        if len(clips) >= cap:
+            break
+        start = span["start"]
+        if start - last_end < spacing:
+            continue
+        end = min(start + display_seconds, video_duration)
+        if end - start < 0.4:  # too close to the end of the video to be worth a flash
+            continue
+        clips.append({"start": round(start, 3), "end": round(end, 3), "query": span["query"]})
+        last_end = end
+    return clips
 
 
 def _key(word: str) -> str:
@@ -304,10 +371,20 @@ def llm_enrich(plan: dict, model: str = "gemini-3.5-flash", max_retries: int = 3
     plan["zooms"] = zooms_from_spans(spans)
     plan["sfx"] = plan_sfx(plan["words"])
 
+    broll_spans = []
+    for item in result.get("broll_spans", []):
+        resolved = _resolve_span_times(plan["words"], item.get("start_index"), item.get("end_index"))
+        query = item.get("query_en", "")
+        if resolved and _looks_like_a_query(query):
+            broll_spans.append({**resolved, "query": query.strip()})
+    plan["broll_spans"] = broll_spans
+    video_duration = plan.get("output_duration") or plan.get("source_duration") or 0.0
+    plan["broll"] = plan_broll(broll_spans, video_duration)
+
     n_emoji = sum(1 for w in plan["words"] if w.get("emoji"))
     print(f"[analyze] hook: {plan['hook']['text']!r}, "
           f"{sum(w['keyword'] for w in plan['words'])} keywords, {n_emoji} emoji, "
-          f"{len(spans)} emphasis spans")
+          f"{len(spans)} emphasis spans, {len(plan['broll'])} broll")
     return plan
 
 

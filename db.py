@@ -39,6 +39,10 @@ CREATE TABLE IF NOT EXISTS plans (
 
 -- One row per render attempt, each keeping the settings it ran with, so
 -- "the previous one looked better" is answerable.
+--
+-- kind separates throwaway previews (a 5s slice around a word, a captions-only
+-- pass with no grade) from real renders. Without it the newest row -- which the
+-- UI treats as "the current video" -- is whichever preview was clicked last.
 CREATE TABLE IF NOT EXISTS renders (
     id          TEXT PRIMARY KEY,
     project_id  TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -48,6 +52,7 @@ CREATE TABLE IF NOT EXISTS renders (
     status      TEXT NOT NULL DEFAULT 'queued',
     progress    REAL NOT NULL DEFAULT 0,
     error       TEXT,
+    kind        TEXT NOT NULL DEFAULT 'full',
     created_at  REAL NOT NULL
 );
 
@@ -93,6 +98,13 @@ def connect() -> sqlite3.Connection:
 def init():
     with connect() as conn:
         conn.executescript(SCHEMA)
+        # ponytail: one ALTER instead of a migration framework. CREATE TABLE IF
+        # NOT EXISTS silently leaves an older table alone, so a data/ volume
+        # from before `kind` existed needs the column added in place. Drop this
+        # once no such database is still around.
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(renders)")}
+        if "kind" not in cols:
+            conn.execute("ALTER TABLE renders ADD COLUMN kind TEXT NOT NULL DEFAULT 'full'")
 
 
 def new_id() -> str:
@@ -163,13 +175,14 @@ def get_plan(project_id: str) -> dict | None:
 
 # --- renders ----------------------------------------------------------------
 
-def create_render(project_id: str, settings: dict) -> str:
+def create_render(project_id: str, settings: dict, kind: str = "full") -> str:
     render_id = new_id()
     with connect() as conn:
         conn.execute(
-            "INSERT INTO renders (id, project_id, settings, status, created_at)"
-            " VALUES (?,?,?,?,?)",
-            (render_id, project_id, json.dumps(settings, ensure_ascii=False), "queued", time.time()),
+            "INSERT INTO renders (id, project_id, settings, status, kind, created_at)"
+            " VALUES (?,?,?,?,?,?)",
+            (render_id, project_id, json.dumps(settings, ensure_ascii=False), "queued",
+             kind, time.time()),
         )
     return render_id
 
@@ -192,12 +205,18 @@ def get_render(render_id: str) -> dict | None:
     return out
 
 
-def list_renders(project_id: str, limit: int = 20) -> list[dict]:
+def list_renders(project_id: str, limit: int = 20, kind: str | None = "full") -> list[dict]:
+    """Previews are excluded by default: they are throwaway, and the caller that
+    wants one already has its id. Pass kind=None to see everything."""
+    sql = "SELECT * FROM renders WHERE project_id=?"
+    args: list = [project_id]
+    if kind:
+        sql += " AND kind=?"
+        args.append(kind)
+    sql += " ORDER BY created_at DESC LIMIT ?"
+    args.append(limit)
     with connect() as conn:
-        rows = conn.execute(
-            "SELECT * FROM renders WHERE project_id=? ORDER BY created_at DESC LIMIT ?",
-            (project_id, limit),
-        ).fetchall()
+        rows = conn.execute(sql, args).fetchall()
     out = []
     for r in rows:
         d = dict(r)

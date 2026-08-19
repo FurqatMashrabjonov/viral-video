@@ -136,15 +136,30 @@ def re_enrich(project_id: str, stage_cb=None) -> dict:
 
 # --- phase B: as often as the user likes ------------------------------------
 
+CAPTIONS_ONLY_OVERRIDES = {
+    "denoise": False, "grade": False, "vignette": False,
+    "zoom": False, "broll": False, "sfx": False, "audio_cleanup": False,
+}
+
+
 def render(project_id: str, settings: dict | None = None, progress_cb=None,
            stage_cb=None, render_id: str | None = None,
-           segment: tuple[float, float] | None = None) -> str:
+           segment: tuple[float, float] | None = None,
+           captions_only: bool = False) -> str:
     """Render the stored plan. Never touches Scribe, so a re-render is CPU only.
 
     With `segment=(t0, t1)` only that slice of the source is rendered, on a
     timeline shifted to start at zero: the preview the editor plays after a
     correction goes through the exact same filter path as the full render, so it
     cannot drift from what the final video will show.
+
+    With `captions_only=True` everything that is not a subtitle is switched off
+    and the encoder runs in preview mode -- the point is to check subtitle
+    wording, timing and style in a couple of seconds instead of waiting out a
+    full grade. The captions themselves are byte-identical to the final render:
+    the ASS burn is the last step of the filter chain and does not depend on
+    any of the stages being skipped. Everything else about the picture,
+    grade included, is deliberately absent.
 
     A caller that needs the id before the work starts (an HTTP handler wanting
     to hand the client something to poll) can create the row itself and pass it
@@ -159,8 +174,11 @@ def render(project_id: str, settings: dict | None = None, progress_cb=None,
         raise ValueError(f"project {project_id} has no plan yet")
 
     settings = merge_settings(settings)
+    if captions_only:
+        settings = {**settings, **CAPTIONS_ONLY_OVERRIDES}
     if render_id is None:
-        render_id = db.create_render(project_id, settings)
+        render_id = db.create_render(project_id, settings,
+                                     kind="preview" if captions_only or segment else "full")
 
     def stage(s, progress=None, message=None):
         db.add_event(project_id, s, progress=progress, message=message, render_id=render_id)
@@ -169,8 +187,9 @@ def render(project_id: str, settings: dict | None = None, progress_cb=None,
 
     out_dir = db.MEDIA_DIR / project_id
     out_dir.mkdir(parents=True, exist_ok=True)
-    output_path = out_dir / f"{render_id}{'_seg' if segment else ''}.mp4"
-    ass_path = out_dir / f"{render_id}{'_seg' if segment else ''}.ass"
+    suffix = "_seg" if segment else ("_cap" if captions_only else "")
+    output_path = out_dir / f"{render_id}{suffix}.mp4"
+    ass_path = out_dir / f"{render_id}{suffix}.ass"
 
     cpu_start = _cpu_seconds()
     try:
@@ -280,6 +299,7 @@ def render(project_id: str, settings: dict | None = None, progress_cb=None,
             sfx_volume=settings["sfx_volume"],
             target_lufs=settings["target_lufs"],
             audio_cleanup=settings["audio_cleanup"],
+            fast=captions_only,
         )
         db.update_render(
             render_id, status="done", progress=1.0,

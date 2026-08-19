@@ -137,6 +137,38 @@ soni hali ham 1 bo'lishi kerak.
 Xarajat logi ikkalasini alohida yozadi — `INGEST` qatorida Scribe narxi,
 `RENDER` qatorida faqat CPU.
 
+## Subtitrni tez ko'rish (preview)
+
+To'liq render'ni kutmasdan subtitr matni, vaqti va uslubini tekshirish uchun:
+
+```python
+render(project_id, captions_only=True)   # butun video, faqat subtitr
+```
+
+yoki HTTP orqali: `POST /api/projects/{id}/render` tanasida
+`{"settings": {...}, "captions_only": true}`. Web UI'da o'ng paneldagi
+**«Subtitrni tez ko'rish»** tugmasi.
+
+Nima o'chiriladi: denoise, grade (LUT), vignette, zoom, B-roll, sfx, audio
+tozalash. Nima qoladi: subtitrning **o'zi, aynan yakuniy videodagidek** —
+ASS burn filter zanjirining eng oxirgi bosqichi va o'chirilgan bosqichlarning
+hech biriga bog'liq emas. Ustiga: luma o'lchash bosqichi tashlab ketiladi
+(u manbani to'liq qayta dekodlaydi), x264 `ultrafast -crf 28`, va kadr
+burn'dan **keyin** 960px balandlikka kichraytiriladi.
+
+Kichraytirish burn'dan *keyin* bo'lishi muhim — oldin qilinsa libass matnni
+kichik o'lchamda qayta joylashtiradi, outline qalinligi va box padding
+boshqacha yaxlitlanadi, ya'ni preview yakuniy videoda hech qachon
+chiqmaydigan narsani ko'rsatadi.
+
+O'lchangan (30 soniyalik 1080x1920 klip): to'liq render **17.5s**, preview
+**1.8s**, fayl hajmi 22.4MB o'rniga 6.9MB.
+
+Preview render'lar `renders.kind='preview'` bilan belgilanadi va render
+tarixida ko'rinmaydi — aks holda eng oxirgi qator (UI uni "joriy video" deb
+biladi) oxirgi bosilgan preview bo'lib qolardi. Bu so'z preview'iga
+(`segment=`) ham tegishli.
+
 ## Jonli progress (SSE)
 
 Bosqichlar `events` jadvaliga yoziladi, xotiraga emas — brauzer render o'rtasida

@@ -191,6 +191,36 @@ def test_broll_sits_between_zoom_and_vignette():
     assert g.index("zoompan") < g.index("[pip]") < g.index("vignette") < g.index("ass=")
 
 
+# --- captions preview --------------------------------------------------------
+
+EQ = {"brightness": 0.0, "contrast": 1.0}
+
+
+def test_no_downscale_by_default():
+    g = build_video_filter(EQ, "luts/warm_standard.cube", "x.ass")
+    assert "scale=-2:" not in g
+
+
+def test_downscale_runs_after_the_caption_burn():
+    """Scaling before the burn would make libass re-lay the text at the smaller
+    size, where outline and box padding round differently -- the preview would
+    then show something the full render never produces."""
+    g = build_video_filter(EQ, "luts/warm_standard.cube", "x.ass", downscale_h=960)
+    assert g.index("ass=") < g.index("scale=-2:960")
+
+
+def test_downscale_still_reaches_vout_without_captions():
+    g = build_video_filter(EQ, "luts/warm_standard.cube", None, downscale_h=960)
+    assert "scale=-2:960[vout]" in g
+
+
+def test_preview_height_keeps_width_even():
+    """-2 lets x264 have an even width at any source aspect; a hardcoded width
+    would letterbox anything that is not exactly 9:16."""
+    g = build_video_filter(EQ, "luts/warm_standard.cube", "x.ass", downscale_h=960)
+    assert "scale=-2:960" in g
+
+
 if __name__ == "__main__":
     import sys
     failed = 0

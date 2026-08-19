@@ -11,6 +11,7 @@ from pathlib import Path
 DEFAULT_LUT = "luts/warm_standard.cube"
 LUT_OPACITY = 0.6  # never 100% per spec
 FONTS_DIR = str(Path("fonts").resolve())
+PREVIEW_HEIGHT = 960  # half of 1920: same layout, a fifth of the bytes to ship
 
 
 def measure_mean_luma(video_path: str, sample_every: int = 15) -> float:
@@ -147,7 +148,8 @@ def build_broll_filter(broll: list[dict], broll_inputs: dict, width: int, height
 
 def build_video_filter(eq: dict, lut_path: str, ass_path: str | None, zoom: str = "",
                        lut_strength: float = LUT_OPACITY, denoise: bool = True,
-                       vignette: bool = True, grade: bool = True, broll_graph: str = "") -> str:
+                       vignette: bool = True, grade: bool = True, broll_graph: str = "",
+                       downscale_h: int | None = None) -> str:
     head = "hqdn3d=2:1.5:3:3," if denoise else ""
     graph = (
         f"[0:v]{head}eq=brightness={eq['brightness']}:contrast={eq['contrast']}[eqd]"
@@ -170,9 +172,17 @@ def build_video_filter(eq: dict, lut_path: str, ass_path: str | None, zoom: str 
     graph += ";[pip]vignette=PI/6[v_graded]" if vignette else ";[pip]copy[v_graded]"
 
     if ass_path:
-        graph += f";[v_graded]ass='{ass_path}':fontsdir='{FONTS_DIR}'[vout]"
+        graph += f";[v_graded]ass='{ass_path}':fontsdir='{FONTS_DIR}'[vburn]"
     else:
-        graph += ";[v_graded]copy[vout]"
+        graph += ";[v_graded]copy[vburn]"
+
+    # The preview downscale happens AFTER the burn, never before: libass then
+    # lays the captions out at the real output size and the whole frame is
+    # shrunk afterwards, so the preview shows the exact proportions the full
+    # render will, only smaller. Scaling first would make libass re-lay the text
+    # at the smaller size, where outline widths and box padding round
+    # differently -- a preview that quietly lies about the final look.
+    graph += f";[vburn]scale=-2:{downscale_h}[vout]" if downscale_h else ";[vburn]copy[vout]"
     return graph
 
 
@@ -246,12 +256,24 @@ def enhance(input_path: str, output_path: str, lut_path: str = DEFAULT_LUT, ass_
             lut_strength: float = LUT_OPACITY, denoise: bool = True, vignette: bool = True,
             grade: bool = True, sfx_volume: float = SFX_VOLUME, target_lufs: float = -16.0,
             audio_cleanup: bool = True, seek_start: float | None = None,
-            seek_duration: float | None = None, broll: list[dict] | None = None):
+            seek_duration: float | None = None, broll: list[dict] | None = None,
+            fast: bool = False):
     """broll entries are {"start", "end", "path"} -- path already resolved to a
     local file (pexels.fetch_clip, called by the caller) so this module stays
-    ffmpeg-only and never touches the network."""
-    mean_luma = measure_mean_luma(input_path)
-    eq = adaptive_eq_params(mean_luma)
+    ffmpeg-only and never touches the network.
+
+    `fast` is for previews: no luma probe, ultrafast x264 at a loose crf, and
+    the frame shrunk to PREVIEW_HEIGHT after the caption burn. Measured end to
+    end on a 30s 1080x1920 clip -- 17.5s full render, 1.8s preview. Most of
+    that gap is the grade (lut3d + split/blend is ~2s of a 6s clip on its
+    own), so `fast` is only worth asking for alongside grade=False; the
+    encoder settings and the skipped probe account for the rest.
+    """
+    # The luma probe is a full extra decode of the source (0.78s on a 30s
+    # clip, a fifth of a preview's whole runtime). A preview shows captions,
+    # not the exposure lift, so it pays for a neutral eq instead of measuring.
+    mean_luma = 128.0 if fast else measure_mean_luma(input_path)
+    eq = {"brightness": 0.0, "contrast": 1.0} if fast else adaptive_eq_params(mean_luma)
     w, h = get_video_dims(input_path)
 
     zoom = ""
@@ -286,9 +308,11 @@ def enhance(input_path: str, output_path: str, lut_path: str = DEFAULT_LUT, ass_
           f"{len(zooms or [])} zooms, {len(usable)} sfx, {len(usable_broll)} broll")
 
     broll_graph = build_broll_filter(usable_broll, broll_inputs, w, h, lut_path, lut_strength, "zoomed")
+    downscale_h = PREVIEW_HEIGHT if fast and h > PREVIEW_HEIGHT else None
     filter_complex = (
         build_video_filter(eq, lut_path, ass_path, zoom, lut_strength=lut_strength,
-                           denoise=denoise, vignette=vignette, grade=grade, broll_graph=broll_graph)
+                           denoise=denoise, vignette=vignette, grade=grade, broll_graph=broll_graph,
+                           downscale_h=downscale_h)
         + ";"
         + build_audio_filter(usable, sfx_inputs, volume=sfx_volume,
                              target_lufs=target_lufs, cleanup=audio_cleanup)
@@ -301,11 +325,12 @@ def enhance(input_path: str, output_path: str, lut_path: str = DEFAULT_LUT, ass_
         seek_args = ["-ss", f"{seek_start:.3f}"]
     if seek_duration is not None:
         seek_args += ["-t", f"{seek_duration:.3f}"]
+    enc = ["-preset", "ultrafast", "-crf", "28"] if fast else []
     cmd = [
         "ffmpeg", "-y", *seek_args, "-i", input_path, *sfx_args, *broll_args,
         "-filter_complex", filter_complex,
         "-map", "[vout]", "-map", "[aout]",
-        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac",
+        "-c:v", "libx264", *enc, "-pix_fmt", "yuv420p", "-c:a", "aac",
         output_path,
     ]
     total_duration = seek_duration or (get_duration(input_path) if progress_cb else None)

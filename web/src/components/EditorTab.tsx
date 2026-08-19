@@ -19,7 +19,7 @@ type Props = {
   // The preview video lives in the always-visible video panel, not here --
   // this tab only triggers it and reports progress up.
   previewBusy: boolean
-  onPreviewStart: () => void
+  onPreviewStart: (label: string) => void
   onPreviewResult: (render: Render | null) => void
 }
 
@@ -61,17 +61,11 @@ export function EditorTab({
   async function previewAround() {
     if (selected === null) return
     const word = words[selected]
-    onPreviewStart()
+    onPreviewStart(`so'z: «${word.word}»`)
     try {
       const t0 = Math.max(0, word.start - PREVIEW_BEFORE)
       const t1 = word.start + PREVIEW_AFTER
-      const { render_id } = await api.render(projectId, { settings, segment: [t0, t1] })
-
-      let row: Render | null = null
-      for (let i = 0; i < 90 && row?.status !== "done" && row?.status !== "error"; i++) {
-        await new Promise((r) => setTimeout(r, 500))
-        row = await api.renderStatus(render_id)
-      }
+      const row = await api.renderAndWait(projectId, settings, { segment: [t0, t1] })
       onPreviewResult(row)
       if (row?.status !== "done") toast.error("Oldindan ko'rish chiqmadi")
     } catch (e) {

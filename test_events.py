@@ -127,6 +127,58 @@ def test_unknown_project_has_no_stream():
     assert TestClient(app).get("/api/projects/nope/stream").status_code == 404
 
 
+# --- preview renders stay out of the history --------------------------------
+
+def test_previews_are_hidden_from_the_render_list():
+    """The newest row is what the UI calls "the current video". A 5s word
+    preview or an ungraded captions pass must never take that slot."""
+    pid = _fresh_project()
+    full = db.create_render(pid, {}, kind="full")
+    db.create_render(pid, {}, kind="preview")
+    assert [r["id"] for r in db.list_renders(pid)] == [full]
+
+
+def test_previews_are_still_reachable_by_id():
+    pid = _fresh_project()
+    rid = db.create_render(pid, {}, kind="preview")
+    assert db.get_render(rid)["kind"] == "preview"
+
+
+def test_kind_none_shows_everything():
+    pid = _fresh_project()
+    db.create_render(pid, {}, kind="full")
+    db.create_render(pid, {}, kind="preview")
+    assert len(db.list_renders(pid, kind=None)) == 2
+
+
+def test_renders_default_to_full():
+    pid = _fresh_project()
+    assert db.get_render(db.create_render(pid, {}))["kind"] == "full"
+
+
+def test_a_pre_kind_database_gains_the_column():
+    """CREATE TABLE IF NOT EXISTS leaves an older table alone, so an existing
+    data/ volume would keep a renders table with no `kind` and every query
+    touching it would fail."""
+    shutil.rmtree(db.DATA_DIR, ignore_errors=True)
+    with db.connect() as conn:
+        conn.executescript(db.SCHEMA.replace("kind        TEXT NOT NULL DEFAULT 'full',\n    ", ""))
+        assert "kind" not in {r["name"] for r in conn.execute("PRAGMA table_info(renders)")}
+    db.init()
+    pid = db.create_project("t", "x.mp4")
+    assert db.get_render(db.create_render(pid, {}))["kind"] == "full"
+
+
+def test_captions_only_switches_off_everything_but_the_subtitles():
+    from pipeline import CAPTIONS_ONLY_OVERRIDES
+    from settings import defaults
+    d = defaults()
+    merged = {**d, **CAPTIONS_ONLY_OVERRIDES}
+    assert merged["captions"] is d["captions"], "captions must be left to the user"
+    for key in ("denoise", "grade", "vignette", "zoom", "broll", "sfx"):
+        assert merged[key] is False, key
+
+
 if __name__ == "__main__":
     import sys
     failed = 0

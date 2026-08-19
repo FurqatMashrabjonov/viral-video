@@ -125,8 +125,13 @@ async def api_enrich(project_id: str):
 @app.post("/api/projects/{project_id}/render")
 async def api_render(project_id: str, body: dict = Body(default={})):
     """Render the stored plan. Body is either the settings directly (as the
-    first clients posted) or {"settings": {...}, "segment": [t0, t1]} for a
-    preview slice."""
+    first clients posted) or {"settings": {...}} plus either optional key:
+
+      segment: [t0, t1]     -- render only that slice
+      captions_only: true   -- subtitles burned onto the raw picture, nothing
+                               else, encoded in preview mode. Seconds instead
+                               of a full grade, for checking wording/timing.
+    """
     if not db.get_project(project_id):
         raise HTTPException(404, "project not found")
     if not db.get_plan(project_id):
@@ -134,6 +139,7 @@ async def api_render(project_id: str, body: dict = Body(default={})):
 
     settings = body.get("settings", body)
     merged = merge_settings(settings)
+    captions_only = bool(body.get("captions_only"))
 
     segment = None
     raw_segment = body.get("segment")
@@ -148,16 +154,19 @@ async def api_render(project_id: str, body: dict = Body(default={})):
 
     # Create the row up front so the client gets an id it can poll immediately,
     # rather than after the render finishes.
-    render_id = db.create_render(project_id, merged)
+    kind = "preview" if (segment or captions_only) else "full"
+    render_id = db.create_render(project_id, merged, kind=kind)
 
     def work():
         try:
-            render(project_id, merged, render_id=render_id, segment=segment)
+            render(project_id, merged, render_id=render_id, segment=segment,
+                   captions_only=captions_only)
         except Exception:
             pass  # render() already journalled the error and marked the row
 
     executor.submit(work)
-    return {"render_id": render_id, "project_id": project_id, "settings": merged, "status": "queued"}
+    return {"render_id": render_id, "project_id": project_id, "settings": merged,
+            "kind": kind, "status": "queued"}
 
 
 @app.get("/api/renders/{render_id}")

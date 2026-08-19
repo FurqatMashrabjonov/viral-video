@@ -22,6 +22,10 @@ export default function App() {
   const [rail, setRail] = useState<RailTab>("style")
   const [preview, setPreview] = useState<Render | null>(null)
   const [previewBusy, setPreviewBusy] = useState(false)
+  // What kind of preview is on screen. A captions preview has no grade and no
+  // zoom on purpose, so the badge has to say which one you are looking at --
+  // otherwise a flat, ungraded picture reads as a broken render.
+  const [previewLabel, setPreviewLabel] = useState("")
 
   const terminal = schema?.terminal_stages ?? []
   const { events, done, restart } = useStream(selectedId, terminal)
@@ -53,13 +57,20 @@ export default function App() {
   useEffect(() => {
     setRail("style")
     setPreview(null)
+    setPreviewLabel("")
     setPreviewBusy(false)
   }, [selectedId])
 
-  function startPreview() {
+  function startPreview(label: string) {
     restart()
     setPreview(null)
+    setPreviewLabel(label)
     setPreviewBusy(true)
+  }
+
+  function finishPreview(r: Render | null) {
+    setPreview(r)
+    setPreviewBusy(false)
   }
 
   function selectProject(id: string) {
@@ -142,10 +153,7 @@ export default function App() {
                     onSaved={(plan) => setDetail((d) => (d ? { ...d, plan } : d))}
                     previewBusy={previewBusy}
                     onPreviewStart={startPreview}
-                    onPreviewResult={(r) => {
-                      setPreview(r)
-                      setPreviewBusy(false)
-                    }}
+                    onPreviewResult={finishPreview}
                   />
                 ) : (
                   <p className="text-sm text-muted-foreground">
@@ -162,6 +170,9 @@ export default function App() {
               renders={detail.renders}
               preview={preview}
               previewBusy={previewBusy}
+              previewLabel={previewLabel}
+              onPreviewStart={startPreview}
+              onPreviewResult={finishPreview}
               onBeforeAction={restart}
             />
           </div>

@@ -67,6 +67,9 @@ export type Schema = {
   terminal_stages: string[]
 }
 
+/** Preview modifiers on a render request; both are optional and combinable. */
+export type RenderExtra = { segment?: [number, number]; captions_only?: boolean }
+
 async function json<T>(res: Response): Promise<T> {
   if (!res.ok) throw new Error(`${res.status} ${await res.text()}`)
   return res.json() as Promise<T>
@@ -99,12 +102,31 @@ export const api = {
   // rather than handing back a job id to poll.
   enrich: (id: string) => fetch(`/api/projects/${id}/enrich`, { method: "POST" }).then(json<Plan>),
 
-  render: (id: string, settings: Record<string, unknown>) =>
+  render: (id: string, settings: Record<string, unknown>, extra: RenderExtra = {}) =>
     fetch(`/api/projects/${id}/render`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(settings),
+      body: JSON.stringify({ settings, ...extra }),
     }).then(json<{ render_id: string }>),
+
+  // Renders are queued server-side, so the POST returns straight away and the
+  // row has to be polled. Both preview buttons want the same loop, so it lives
+  // here once rather than in each of them.
+  renderAndWait: async (
+    id: string,
+    settings: Record<string, unknown>,
+    extra: RenderExtra = {},
+    timeoutMs = 120_000,
+  ): Promise<Render | null> => {
+    const { render_id } = await api.render(id, settings, extra)
+    const deadline = Date.now() + timeoutMs
+    let row: Render | null = null
+    while (Date.now() < deadline && row?.status !== "done" && row?.status !== "error") {
+      await new Promise((r) => setTimeout(r, 500))
+      row = await api.renderStatus(render_id)
+    }
+    return row
+  },
 
   renderStatus: (renderId: string) =>
     fetch(`/api/renders/${renderId}`).then(json<Render>),

@@ -171,7 +171,7 @@ def render(project_id: str, settings: dict | None = None, progress_cb=None,
             else:
                 hook = None
             build_ass(words, style, project["width"], project["height"],
-                      hook=hook).save(str(ass_path))
+                      hook=hook, show_emoji=settings["emoji"]).save(str(ass_path))
             burn_ass = str(ass_path)
 
         # Zoom and sfx placement is a pure function of the words plus a few

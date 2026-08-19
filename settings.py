@@ -31,6 +31,8 @@ def _fields() -> list[dict]:
          "default": 1.0, "min": 0.3, "max": 2.5, "step": 0.05, "depends_on": "captions"},
         {"key": "keyword_highlight", "group": "Subtitr", "label": "Kalit so'z ajratish",
          "type": "bool", "default": True, "depends_on": "captions"},
+        {"key": "emoji", "group": "Subtitr", "label": "Emoji taklif", "type": "bool",
+         "default": True, "depends_on": "captions"},
 
         # --- hook ---
         {"key": "hook", "group": "Hook", "label": "Hook sarlavha", "type": "bool", "default": True},

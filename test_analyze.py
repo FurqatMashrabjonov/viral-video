@@ -10,6 +10,7 @@ from analyze import (
     mark_low_confidence,
     plan_zooms,
     build_edit_plan,
+    _looks_like_one_emoji,
 )
 
 # 2.0s of dead air between "bor" and "keyin"
@@ -130,6 +131,23 @@ def test_build_edit_plan_flags_low_confidence_words():
     plan = build_edit_plan(words, source_duration=1.0, cut_silence=False)
     flags = [w["low_confidence"] for w in plan["words"]]
     assert flags == [False, True]
+
+
+def test_single_emoji_glyphs_pass():
+    for e in ["🚗", "💰", "⚠️", "📈", "🔥"]:
+        assert _looks_like_one_emoji(e), e
+
+
+def test_word_answers_are_rejected():
+    """The prompt asks for a glyph -- if the model answers in words instead,
+    that text must not end up rendered as an 'emoji' run."""
+    assert not _looks_like_one_emoji("car")
+    assert not _looks_like_one_emoji("mashina")
+
+
+def test_empty_and_missing_are_rejected():
+    assert not _looks_like_one_emoji("")
+    assert not _looks_like_one_emoji(None)
 
 
 if __name__ == "__main__":

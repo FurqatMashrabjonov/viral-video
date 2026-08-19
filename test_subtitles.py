@@ -1,7 +1,7 @@
 """Self-check for the keyword-highlight and hook tags in subtitles.py.
 Run: .venv/bin/python test_subtitles.py
 """
-from subtitles import build_ass, _keyword_tags, _tag_color
+from subtitles import build_ass, _keyword_tags, _tag_color, _emoji_run, _style_font, EMOJI_FONT
 
 BASE = {
     "mode": "karaoke", "font": "Noto Sans", "font_bold": "Noto Sans Bold",
@@ -86,6 +86,48 @@ def test_no_hook_means_no_hook_style():
 def test_empty_hook_text_is_ignored():
     subs = build_ass(WORDS, COLOR_STYLE, 1080, 1920, hook={"text": "", "start": 0, "end": 3})
     assert "Hook" not in subs.styles
+
+
+EMOJI_WORDS = [
+    {"word": "narx", "start": 0.0, "end": 0.4, "keyword": False},
+    {"word": "30", "start": 0.4, "end": 0.8, "keyword": True, "emoji": "📈"},
+    {"word": "foiz", "start": 0.8, "end": 1.2, "keyword": False},
+]
+
+
+def test_emoji_run_switches_font_and_switches_back():
+    """A karaoke line is one Dialogue event with several words in it, so the
+    emoji's font override must not leak into whatever comes after it."""
+    run = _emoji_run(COLOR_STYLE, "📈")
+    assert run.count(f"\\fn{EMOJI_FONT}") == 1
+    assert run.rstrip().endswith(f"{{\\fn{_style_font(COLOR_STYLE)}\\fscx100\\fscy100}}")
+
+
+def test_karaoke_includes_emoji_when_present_and_enabled():
+    subs = build_ass(EMOJI_WORDS, COLOR_STYLE, 1080, 1920, show_emoji=True)
+    assert "📈" in subs[0].text
+    assert f"\\fn{EMOJI_FONT}" in subs[0].text
+
+
+def test_show_emoji_false_omits_the_glyph_entirely():
+    subs = build_ass(EMOJI_WORDS, COLOR_STYLE, 1080, 1920, show_emoji=False)
+    assert "📈" not in subs[0].text
+
+
+def test_word_without_emoji_field_is_unaffected():
+    subs = build_ass(WORDS, COLOR_STYLE, 1080, 1920, show_emoji=True)
+    assert EMOJI_FONT not in subs[0].text
+
+
+def test_pop_mode_appends_emoji_after_the_word():
+    # Pop mode emits one event per word, in order -- index straight into the
+    # list rather than searching by substring, since "30" also matches inside
+    # the "fscx130" override tag every event carries.
+    pop_style = {**COLOR_STYLE, "mode": "pop"}
+    subs = build_ass(EMOJI_WORDS, pop_style, 1080, 1920, show_emoji=True)
+    event = subs[1]
+    assert "📈" in event.text
+    assert event.text.index("30") < event.text.index("📈")
 
 
 if __name__ == "__main__":

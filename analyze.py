@@ -148,17 +148,30 @@ Senga video transkripti beriladi. Ikki narsa qaytar:
    - tomoshabinni to'xtatadigan: savol, dadil da'vo yoki aniq raqam
    - clickbait emas, transkriptda yo'q narsani va'da qilma
 
-2. keywords — transkriptdagi urg'u berilishi kerak bo'lgan so'zlar.
-   - faqat transkriptda AYNAN uchraydigan so'zlarni qaytar, o'zgartirmasdan
+2. keywords — transkriptdagi urg'u berilishi kerak bo'lgan so'zlar, har biriga bitta emoji bilan.
+   - word: faqat transkriptda AYNAN uchraydigan so'zni qaytar, o'zgartirmasdan
+   - emoji: shu so'z mazmuniga mos BITTA emoji — teri rangi modifikatori yoki
+     ZWJ ketma-ketligi (bir nechta emoji birlashgan turi) ishlatma, faqat oddiy
+     yakka belgi (masalan 🚗, 💰, ⚠️, 📈)
    - atamalar, ismlar, muhim tushunchalar, natijani bildiruvchi so'zlar
    - har 8-10 so'zga taxminan bittadan, hammasini belgilama
-   - "va", "bu", "shu" kabi yordamchi so'zlarni belgilama"""
+   - "va", "bu", "shu" kabi yordamchi so'zlarga emoji bermang"""
 
 _ENRICH_SCHEMA = {
     "type": "object",
     "properties": {
         "hook": {"type": "string"},
-        "keywords": {"type": "array", "items": {"type": "string"}},
+        "keywords": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "word": {"type": "string"},
+                    "emoji": {"type": "string"},
+                },
+                "required": ["word", "emoji"],
+            },
+        },
     },
     "required": ["hook", "keywords"],
 }
@@ -166,6 +179,13 @@ _ENRICH_SCHEMA = {
 
 def _key(word: str) -> str:
     return word.strip(".,!?:;()\"'«»").casefold()
+
+
+def _looks_like_one_emoji(s: str) -> bool:
+    """Reject anything that isn't plausibly a single glyph: an ASCII letter
+    means the model answered in words, and long strings are more likely a ZWJ
+    sequence than the plain glyph the prompt asked for."""
+    return bool(s) and len(s) <= 3 and not any(c.isascii() and c.isalpha() for c in s)
 
 
 def llm_enrich(plan: dict, model: str = "gemini-3.5-flash", max_retries: int = 3) -> dict:
@@ -215,15 +235,24 @@ def llm_enrich(plan: dict, model: str = "gemini-3.5-flash", max_retries: int = 3
 
     plan["hook"] = {"text": result["hook"].strip(), "start": 0.0, "end": HOOK_END}
 
-    wanted = {_key(k) for k in result.get("keywords", [])}
+    wanted = {}
+    for item in result.get("keywords", []):
+        emoji = item.get("emoji", "")
+        wanted[_key(item.get("word", ""))] = emoji if _looks_like_one_emoji(emoji) else None
+
     for w in plan["words"]:
-        if _key(w["word"]) in wanted:
+        key = _key(w["word"])
+        if key in wanted:
             w["keyword"] = True
+            if wanted[key]:
+                w["emoji"] = wanted[key]
 
     cut_marks = [remap_time(c["start"], plan["cuts"]) for c in plan["cuts"]]
     plan["zooms"] = plan_zooms(plan["words"], cut_marks)
     plan["sfx"] = plan_sfx(plan["words"])
-    print(f"[analyze] hook: {plan['hook']['text']!r}, {sum(w['keyword'] for w in plan['words'])} keywords")
+    n_emoji = sum(1 for w in plan["words"] if w.get("emoji"))
+    print(f"[analyze] hook: {plan['hook']['text']!r}, "
+          f"{sum(w['keyword'] for w in plan['words'])} keywords, {n_emoji} emoji")
     return plan
 
 

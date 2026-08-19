@@ -3,9 +3,18 @@ import yaml
 import pysubs2
 
 
+EMOJI_FONT = "Noto Emoji"          # monochrome, renders through the normal text
+                                    # path -- no colour-font support needed in libass
+EMOJI_SCALE = 130                  # the glyph reads small next to bold caption text
+
+
 def load_style(style_path: str) -> dict:
     with open(style_path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
+
+
+def _style_font(style: dict) -> str:
+    return style["font_bold"] if style.get("bold") else style["font"]
 
 
 def _color(rgb, alpha=0):
@@ -21,7 +30,7 @@ def _tag_color(rgb) -> str:
 
 def _make_ssa_style(style: dict) -> pysubs2.SSAStyle:
     s = pysubs2.SSAStyle()
-    s.fontname = style["font_bold"] if style.get("bold") else style["font"]
+    s.fontname = _style_font(style)
     s.fontsize = style["font_size"]
     s.primarycolor = _color(style["primary_color"])
     s.secondarycolor = _color(style.get("secondary_color", style["primary_color"]))
@@ -70,6 +79,20 @@ def _keyword_tags(style: dict, is_keyword: bool) -> str:
     return tags
 
 
+def _emoji_run(style: dict, emoji: str) -> str:
+    """A word's emoji as its own text run: switch font, scale up, switch back.
+
+    The scale and font revert inside the tag block itself rather than relying
+    on the next word to reset them -- a line with no more emoji after this one
+    must not stay on the emoji font.
+    """
+    return (
+        f"{{\\fn{EMOJI_FONT}\\fscx{EMOJI_SCALE}\\fscy{EMOJI_SCALE}}}"
+        f" {emoji}"
+        f"{{\\fn{_style_font(style)}\\fscx100\\fscy100}}"
+    )
+
+
 def group_words(words: list[dict], max_words: int = 4, max_chars: int = 22) -> list[list[dict]]:
     """Chunk words into on-screen lines, capped by word count and a char-count proxy
     for pixel width.
@@ -90,12 +113,15 @@ def group_words(words: list[dict], max_words: int = 4, max_chars: int = 22) -> l
     return groups
 
 
-def _karaoke_text(group: list[dict], style: dict) -> str:
+def _karaoke_text(group: list[dict], style: dict, show_emoji: bool) -> str:
     parts = []
     for w in group:
         dur_cs = max(1, round((w["end"] - w["start"]) * 100))
         tags = _keyword_tags(style, w.get("keyword", False))
-        parts.append(f"{{{tags}\\k{dur_cs}}}{w['word']}")
+        run = f"{{{tags}\\k{dur_cs}}}{w['word']}"
+        if show_emoji and w.get("emoji"):
+            run += _emoji_run(style, w["emoji"])
+        parts.append(run)
     # Joining with a bare space leaves the separator under the *preceding* word's
     # tags, so a highlight box gets trailing padding instead of a stray sliver of
     # the next word's colour.
@@ -104,7 +130,7 @@ def _karaoke_text(group: list[dict], style: dict) -> str:
 
 def _make_hook_style(style: dict) -> pysubs2.SSAStyle:
     s = pysubs2.SSAStyle()
-    s.fontname = style["font_bold"] if style.get("bold") else style["font"]
+    s.fontname = _style_font(style)
     s.fontsize = style.get("hook_font_size", round(style["font_size"] * 1.05))
     s.primarycolor = _color(style.get("hook_color", style["primary_color"]))
     s.outlinecolor = _color(style.get("hook_outline_color", style["outline_color"]))
@@ -120,7 +146,7 @@ def _make_hook_style(style: dict) -> pysubs2.SSAStyle:
 
 
 def build_ass(words: list[dict], style: dict, video_width: int, video_height: int,
-              hook: dict | None = None) -> pysubs2.SSAFile:
+              hook: dict | None = None, show_emoji: bool = True) -> pysubs2.SSAFile:
     subs = pysubs2.SSAFile()
     subs.info["PlayResX"] = str(video_width)
     subs.info["PlayResY"] = str(video_height)
@@ -132,7 +158,7 @@ def build_ass(words: list[dict], style: dict, video_width: int, video_height: in
             start_ms = int(group[0]["start"] * 1000)
             end_ms = int(group[-1]["end"] * 1000)
             subs.append(pysubs2.SSAEvent(start=start_ms, end=end_ms,
-                                        text=_karaoke_text(group, style), style="Default"))
+                                        text=_karaoke_text(group, style, show_emoji), style="Default"))
     elif mode == "pop":
         pop_ms = style.get("pop_duration_ms", 120)
         scale_from = style.get("pop_scale_from", 130)
@@ -140,6 +166,8 @@ def build_ass(words: list[dict], style: dict, video_width: int, video_height: in
             tags = _keyword_tags(style, w.get("keyword", False))
             text = (f"{{\\fscx{scale_from}\\fscy{scale_from}"
                     f"\\t(0,{pop_ms},\\fscx100\\fscy100){tags}}}{w['word']}")
+            if show_emoji and w.get("emoji"):
+                text += _emoji_run(style, w["emoji"])
             subs.append(pysubs2.SSAEvent(start=int(w["start"] * 1000), end=int(w["end"] * 1000),
                                         text=text, style="Default"))
     else:
